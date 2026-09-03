@@ -32,7 +32,7 @@ The cat that grins on any hardware.
 
 ## Status (2026-09-03)
 
-* Full AliceVision builds on Windows with the HIP backend (`scriptsuild-alicevision.cmd`).
+* Full AliceVision builds on Windows with the HIP backend (`scripts/build-alicevision.cmd`).
 * DepthMap output validated against the CUDA node on the same SfM: identical validity masks,
   zero median depth error. Stats, tables and side-by-side panels:
   [docs/validation/monstree-mini6](docs/validation/monstree-mini6/index.md) (6 views, PASS),
