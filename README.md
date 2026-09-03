@@ -30,4 +30,14 @@ The cat that grins on any hardware.
   `haus-infrastructure` (Linux, `meshroom_batch`, `reconstruct`/`newjob` scripts),
   re-homed onto an AMD card.
 
-See `docs/` for the plan and current status.
+## Status (2026-09-03)
+
+* Full AliceVision builds on Windows with the HIP backend (`scriptsuild-alicevision.cmd`).
+* DepthMap output validated against the CUDA node on the same SfM: identical validity masks,
+  zero median depth error. Stats, tables and side-by-side panels:
+  [docs/validation/monstree-mini6](docs/validation/monstree-mini6/index.md) (6 views, PASS),
+  [docs/validation/monstree-full](docs/validation/monstree-full/index.md) (41 views).
+* Memory bridge v1 (`hip/compat/include/cheshire/bridge.h`): VRAM first, mapped system RAM
+  when short, hardware-tested.
+
+See `docs/` for findings, toolchain notes, the bridge design and the port log.
