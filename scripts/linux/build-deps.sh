@@ -8,6 +8,9 @@ AV_DEV="$ROOT/third_party/aliceVision"
 AV_INSTALL="${1:-/opt/AliceVision_deps}"
 AV_BUILD="${2:-$HOME/av-deps-build}"
 JOBS="${JOBS:-$(nproc)}"
+# CMake 4 refuses projects declaring cmake_minimum_required < 3.5 (lz4, OpenMesh); this is
+# honoured by every nested configure the superbuild runs.
+export CMAKE_POLICY_VERSION_MINIMUM=3.5
 mkdir -p "$AV_BUILD" "$AV_INSTALL/lib"
 ln -sfn lib "$AV_INSTALL/lib64"
 cd "$AV_BUILD"
