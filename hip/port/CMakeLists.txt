@@ -29,10 +29,8 @@ set(port_cu
   ${AV_DM}/cuda/planeSweeping/deviceSimilarityVolume.cu
 )
 set(port_host_cpp
-  ${AV_DM}/cuda/host/DeviceCache.cpp
   ${AV_DM}/cuda/host/DeviceMipmapImage.cpp
   ${AV_DM}/cuda/host/DeviceStreamManager.cpp
-  ${AV_DM}/cuda/host/patchPattern.cpp
   ${AV_DM}/cuda/host/utils.cpp
 )
 # .cu files are HIP to CMake; host .cpp files include cuda_runtime.h and are compiled as

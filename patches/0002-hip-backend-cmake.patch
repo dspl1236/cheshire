@@ -77,10 +77,10 @@ index 6ead556..eabd2d9 100644
      #define CUDA_HOST __host__
  #else
 diff --git a/src/aliceVision/depthMap/CMakeLists.txt b/src/aliceVision/depthMap/CMakeLists.txt
-index 25b80d4..f0ba9d1 100644
+index 25b80d4..84dba54 100644
 --- a/src/aliceVision/depthMap/CMakeLists.txt
 +++ b/src/aliceVision/depthMap/CMakeLists.txt
-@@ -113,6 +113,32 @@ set(depthMap_cuda_files_sources
+@@ -113,6 +113,33 @@ set(depthMap_cuda_files_sources
      ${depthMap_cuda_planeSweeping_sources}
  )
  
@@ -102,6 +102,7 @@ index 25b80d4..f0ba9d1 100644
 +            cuda/imageProcessing/deviceGaussianFilter.cu cuda/imageProcessing/deviceColorConversion.cu
 +            cuda/imageProcessing/deviceMipmappedArray.cu
 +            cuda/planeSweeping/deviceDepthSimilarityMap.cu cuda/planeSweeping/deviceSimilarityVolume.cu
++            cuda/host/DeviceCache.cpp cuda/host/patchPattern.cpp
 +            PROPERTIES HEADER_FILE_ONLY true)
 +    endif()
 +    # everything that touches the runtime is compiled by the HIP compiler (host + device passes)
@@ -113,7 +114,7 @@ index 25b80d4..f0ba9d1 100644
  alicevision_add_library(aliceVision_depthMap_cuda
      USE_CUDA
      SOURCES
-@@ -124,7 +150,7 @@ alicevision_add_library(aliceVision_depthMap_cuda
+@@ -124,7 +151,7 @@ alicevision_add_library(aliceVision_depthMap_cuda
          aliceVision_mvsUtils
          aliceVision_system
          assimp::assimp
@@ -521,10 +522,10 @@ index 0000000..fc9c490
 +#include <cheshire/cuda_to_hip.h>
 diff --git a/src/aliceVision/depthMap/cuda/hip/depthmap_device_unity.hip b/src/aliceVision/depthMap/cuda/hip/depthmap_device_unity.hip
 new file mode 100644
-index 0000000..6629cd6
+index 0000000..222a211
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/depthmap_device_unity.hip
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,17 @@
 +// Cheshire: single device translation unit for AliceVision's depthMap CUDA sources.
 +// Windows HIP (ROCm 7.2.1) cannot do relocatable device code (-fgpu-rdc: the
 +// clang-offload-bundler/llvm-objcopy step fails on COFF objects), and the kernels
@@ -538,6 +539,10 @@ index 0000000..6629cd6
 +#include <aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu>
 +#include <aliceVision/depthMap/cuda/planeSweeping/deviceDepthSimilarityMap.cu>
 +#include <aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu>
++// Host files that write the __constant__ symbols (cudaMemcpyToSymbol). Without RDC the
++// host-side shadow variables are TU-local too, so these must live in the same TU.
++#include <aliceVision/depthMap/cuda/host/DeviceCache.cpp>
++#include <aliceVision/depthMap/cuda/host/patchPattern.cpp>
 diff --git a/src/aliceVision/depthMap/cuda/hip/math_constants.h b/src/aliceVision/depthMap/cuda/hip/math_constants.h
 new file mode 100644
 index 0000000..e7182a6

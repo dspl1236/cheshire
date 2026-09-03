@@ -163,6 +163,7 @@ if (ALICEVISION_HAVE_HIP)
             cuda/imageProcessing/deviceGaussianFilter.cu cuda/imageProcessing/deviceColorConversion.cu
             cuda/imageProcessing/deviceMipmappedArray.cu
             cuda/planeSweeping/deviceDepthSimilarityMap.cu cuda/planeSweeping/deviceSimilarityVolume.cu
+            cuda/host/DeviceCache.cpp cuda/host/patchPattern.cpp
             PROPERTIES HEADER_FILE_ONLY true)
     endif()
     # everything that touches the runtime is compiled by the HIP compiler (host + device passes)

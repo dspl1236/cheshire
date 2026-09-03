@@ -11,3 +11,7 @@
 #include <aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu>
 #include <aliceVision/depthMap/cuda/planeSweeping/deviceDepthSimilarityMap.cu>
 #include <aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu>
+// Host files that write the __constant__ symbols (cudaMemcpyToSymbol). Without RDC the
+// host-side shadow variables are TU-local too, so these must live in the same TU.
+#include <aliceVision/depthMap/cuda/host/DeviceCache.cpp>
+#include <aliceVision/depthMap/cuda/host/patchPattern.cpp>
