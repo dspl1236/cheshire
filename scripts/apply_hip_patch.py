@@ -43,6 +43,7 @@ TRACKED = [
     "src/aliceVision/depthMap/CMakeLists.txt",
     "src/aliceVision/mvsData/ROI.hpp",
     "src/aliceVision/depthMap/BufPtr.hpp",
+    "src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp",
 ]
 
 
@@ -67,6 +68,17 @@ def main() -> None:
               .replace("#if !defined(__NVCC__)\n", "#if !defined(__NVCC__) && !defined(__HIPCC__)\n")
         if t2 != t:
             p.write_text(t2, encoding="utf-8", newline="\n")
+
+    # 1b. clang (OpenMP) cannot capture a structured binding inside an omp region
+    #     (DistanceWeighting.cpp: "capturing a structured binding is not yet supported in OpenMP")
+    dw = AV / "src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp"
+    t = dw.read_text(encoding="utf-8")
+    t2 = t.replace("    for (auto & [idView, pointCloud] : perViewObservations)\n    {\n",
+                   "    for (auto & viewObs : perViewObservations)\n    {\n"
+                   "        const auto& idView = viewObs.first;   // not a structured binding: clang/OpenMP cannot capture those\n"
+                   "        auto& pointCloud = viewObs.second;\n", 1)
+    if t2 != t:
+        dw.write_text(t2, encoding="utf-8", newline="\n")
 
     # 2. config.hpp.in
     patch(AV / "src/cmake/config.hpp.in",
@@ -113,6 +125,10 @@ if (NOT ALICEVISION_HAVE_CUDA AND NOT ALICEVISION_USE_HIP STREQUAL "OFF")
                 add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:-include${{ALICEVISION_HIP_DIR}}/cheshire/cuda_to_hip.h>")
             endif()
             add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:-Wno-ignored-attributes>" "$<$<COMPILE_LANGUAGE:HIP>:-Wno-unknown-attributes>")
+            if (WIN32)
+                # the device-side pass rejects Boost.WinAPI's own __stdcall prototypes next to windows.h
+                add_compile_definitions("$<$<COMPILE_LANGUAGE:HIP>:BOOST_USE_WINDOWS_H>" "$<$<COMPILE_LANGUAGE:HIP>:WIN32_LEAN_AND_MEAN>" "$<$<COMPILE_LANGUAGE:HIP>:NOMINMAX>")
+            endif()
             option(ALICEVISION_HIP_RDC "HIP relocatable device code (-fgpu-rdc) instead of the unity device TU; broken on Windows ROCm 7.2.1" OFF)
             message(STATUS "HIP found: ${{hip_VERSION}} (architectures: ${{CMAKE_HIP_ARCHITECTURES}})")
         elseif (ALICEVISION_USE_HIP STREQUAL "ON")

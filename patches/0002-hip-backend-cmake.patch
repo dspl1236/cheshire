@@ -1,5 +1,5 @@
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 8e3e862..9abe172 100644
+index 8e3e862..eed1417 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
 @@ -77,6 +77,8 @@ else()
@@ -11,7 +11,7 @@ index 8e3e862..9abe172 100644
  option(ALICEVISION_DEPTHMAP_BACKEND "Compile DepthMap component with support for CUDA or SYCL or both" AUTO)
  trilean_option(ALICEVISION_USE_OPENCV "Enable use of OpenCV algorithms" OFF)
  trilean_option(ALICEVISION_USE_OPENCV_CONTRIB "Enable use of OpenCV algorithms from extra modules" AUTO)
-@@ -781,6 +783,47 @@ if (ALICEVISION_HAVE_CUDA)
+@@ -781,6 +783,51 @@ if (ALICEVISION_HAVE_CUDA)
      endif()
  endif()
  
@@ -49,6 +49,10 @@ index 8e3e862..9abe172 100644
 +                add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:-include${ALICEVISION_HIP_DIR}/cheshire/cuda_to_hip.h>")
 +            endif()
 +            add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:-Wno-ignored-attributes>" "$<$<COMPILE_LANGUAGE:HIP>:-Wno-unknown-attributes>")
++            if (WIN32)
++                # the device-side pass rejects Boost.WinAPI's own __stdcall prototypes next to windows.h
++                add_compile_definitions("$<$<COMPILE_LANGUAGE:HIP>:BOOST_USE_WINDOWS_H>" "$<$<COMPILE_LANGUAGE:HIP>:WIN32_LEAN_AND_MEAN>" "$<$<COMPILE_LANGUAGE:HIP>:NOMINMAX>")
++            endif()
 +            option(ALICEVISION_HIP_RDC "HIP relocatable device code (-fgpu-rdc) instead of the unity device TU; broken on Windows ROCm 7.2.1" OFF)
 +            message(STATUS "HIP found: ${hip_VERSION} (architectures: ${CMAKE_HIP_ARCHITECTURES})")
 +        elseif (ALICEVISION_USE_HIP STREQUAL "ON")
@@ -565,6 +569,22 @@ index e3b2880..b4e5c7b 100644
  inline std::ostream& operator<<(std::ostream& os, const Range& range)
  {
      os << range.begin << "-" << range.end;
+diff --git a/src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp b/src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp
+index 1f23958..5491985 100644
+--- a/src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp
++++ b/src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp
+@@ -52,8 +52,10 @@ bool weightObservationsFromDistance(sfmData::SfMData & sfmData, size_t neighboor
+     }
+ 
+     // Loop per view
+-    for (auto & [idView, pointCloud] : perViewObservations)
++    for (auto & viewObs : perViewObservations)
+     {
++        const auto& idView = viewObs.first;   // not a structured binding: clang/OpenMP cannot capture those
++        auto& pointCloud = viewObs.second;
+         int N = pointCloud.pts.size();
+ 
+         if (N == 0)
 diff --git a/src/cmake/config.hpp.in b/src/cmake/config.hpp.in
 index 27e3ec0..027ba01 100644
 --- a/src/cmake/config.hpp.in

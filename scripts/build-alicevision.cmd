@@ -22,7 +22,16 @@ rem clang-cl on x64) while defining __SSE3__ etc., so Eigen picks SSE3 intrinsic
 set CFLAGS=-I%R%/hip/compat/include/omp_shim /arch:AVX2
 set CXXFLAGS=-I%R%/hip/compat/include/omp_shim /arch:AVX2
 
+rem STL helper shim: the vcpkg archive was built with a newer MSVC STL that exports
+rem __std_min/max_element_*i from msvcp140; MSVC 14.50.35717 does not. See hip/compat/stlcompat.
+set STLC=%R%/build/stlcompat
+if not exist "%STLC%" mkdir "%STLC%"
+"%LLVMBIN%/clang-cl.exe" /nologo /O2 /MD /c "%R%/hip/compat/stlcompat/std_minmax_element.cpp" /Fo"%STLC%/std_minmax_element.obj" || exit /b 1
+"%LLVMBIN%/llvm-lib.exe" /nologo /out:"%STLC%/stlcompat.lib" "%STLC%/std_minmax_element.obj" || exit /b 1
+
 cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+  "-DCMAKE_EXE_LINKER_FLAGS=%STLC%/stlcompat.lib" ^
+  "-DCMAKE_SHARED_LINKER_FLAGS=%STLC%/stlcompat.lib" ^
   "-DCMAKE_C_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_CXX_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_HIP_COMPILER=%LLVMBIN%/clang-cl.exe" ^
