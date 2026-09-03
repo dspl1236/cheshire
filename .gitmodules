@@ -1,0 +1,3 @@
+[submodule "third_party/aliceVision"]
+	path = third_party/aliceVision
+	url = https://github.com/alicevision/AliceVision.git

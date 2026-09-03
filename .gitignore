@@ -1,0 +1,11 @@
+# local toolchains / venvs / downloads (never committed)
+tools/
+.venv*/
+build*/
+out/
+*.log
+__pycache__/
+*.pyc
+.vs/
+.idea/
+CMakeUserPresets.json

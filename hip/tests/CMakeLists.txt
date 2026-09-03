@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.28)
+project(cheshire_hip_tests LANGUAGES CXX HIP)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_HIP_STANDARD 17)
+if(NOT CMAKE_HIP_ARCHITECTURES)
+  set(CMAKE_HIP_ARCHITECTURES gfx1201 gfx1100)
+endif()
+find_package(hip REQUIRED)
+
+add_executable(hello_hip hello_hip.hip)
+target_link_libraries(hello_hip PRIVATE hip::device)
+
+add_executable(mipmap_tex mipmap_tex.hip)
+target_link_libraries(mipmap_tex PRIVATE hip::device)
