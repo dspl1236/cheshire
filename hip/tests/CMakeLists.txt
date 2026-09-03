@@ -13,3 +13,6 @@ target_link_libraries(hello_hip PRIVATE hip::device)
 
 add_executable(mipmap_tex mipmap_tex.hip)
 target_link_libraries(mipmap_tex PRIVATE hip::device)
+
+add_executable(membridge_probe membridge_probe.hip)
+target_link_libraries(membridge_probe PRIVATE hip::device)

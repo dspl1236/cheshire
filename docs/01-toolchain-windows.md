@@ -1,0 +1,65 @@
+# Windows toolchain (verified 2026-09-03 on RX 9070 / gfx1201)
+
+## Install (no admin required)
+
+```bat
+uv venv --python 3.12 tools\venv-rocm
+uv pip install --python tools\venv-rocm\Scripts\python.exe ^
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl ^
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl ^
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl ^
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz
+tools\venv-rocm\Scripts\rocm-sdk test      # 25 tests OK
+tools\venv-rocm\Scripts\rocm-sdk targets   # gfx1100;gfx1201;gfx1151;gfx1150;gfx1200;gfx1101;gfx1102
+```
+
+Portable CMake 4.4.3 and Ninja 1.13.2 zips live in `tools\cmake` and `tools\ninja`.
+MSVC 2026 Build Tools (14.50) + Windows SDK 10.0.26100 provide the CRT/SDK headers.
+Driver: Adrenalin 26.8.1 (ROCm 7.2.1 needs 26.2.2+).
+
+## Layout of the pip SDK
+
+| | |
+|---|---|
+| root | `tools/venv-rocm/Lib/site-packages/_rocm_sdk_devel` (`rocm-sdk path --root`) |
+| runtime | `root/bin/amdhip64_7.dll`, `amd_comgr0702.dll` |
+| compiler | `root/lib/llvm/bin/clang++.exe`, `clang-cl.exe`, `lld-link.exe` (Clang 22) |
+| device libs | `root/lib/llvm/amdgcn/bitcode` (clang does NOT find these on its own) |
+| CMake configs | `root/lib/cmake/{hip,hip-lang,rocprim,hipcub,rocthrust,...}` |
+| import lib | `root/lib/amdhip64.lib` |
+
+## CMake rules that cost time to learn
+
+1. Every ROCm path handed to CMake or exported as an env var must use **forward slashes**.
+   `HIP_PATH=D:\...` makes CMake's generated `CMakeHIPCompiler.cmake` fail with
+   "Invalid character escape".
+2. Pass `-DCMAKE_HIP_FLAGS="--rocm-path=<root> --rocm-device-lib-path=<root>/lib/llvm/amdgcn/bitcode"`
+   or clang errors with "cannot find ROCm device library".
+3. CMake refuses to mix `cl.exe` for CXX with clang for HIP
+   ("mixes Clang and MSVC ... not supported"). Use the same clang for both:
+   * `clang` variant: `clang++` for CXX and HIP (GNU-style flags, links via `clang++ -fuse-ld=lld`).
+   * `clangcl` variant: `clang-cl` for CXX and HIP (MSVC-style flags, links via `lld-link`
+     through CMake's `vs_link_exe`). **This is the variant for AliceVision**, whose Windows
+     CMake assumes MSVC-style switches.
+4. `vcvarsall.bat x64` prints a `vswhere.exe` warning on this Build Tools install; harmless.
+
+`scripts\env.cmd` sets all of this up; `scripts\build-tests.cmd [arch] [clang|clangcl]` builds and
+runs `hip/tests`.
+
+## Smoke-test results (both variants identical)
+
+```
+[0] AMD Radeon RX 9070 arch=gfx1201 CUs=28 warp=32 VRAM=16304 MB shared/block=65536
+    maxTex2D=16384x16384 canMapHost=1 managed=0
+vadd: OK
+hipMallocMipmappedArray float4 256x128 x4 levels: OK
+surf2Dwrite level0: OK
+mip chain built via tex2D+surf2Dwrite: OK
+tex2DLod lod=0.0 / 1.0 / 2.5: OK
+pitch2D float texture: OK
+hipMallocMipmappedArray half4: OK
+hipMallocManaged 64MB: OK          (note managed=0 in props: coarse-grained, no page migration)
+hipHostMalloc(mapped)+device ptr: OK
+```
+
+Conclusion: nothing in AliceVision's `depthMap/cuda` needs a feature HIP-on-Windows lacks.
