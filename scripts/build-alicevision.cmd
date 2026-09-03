@@ -15,6 +15,11 @@ set INST=%R%/build/av-%ARCH%-install
 
 python "%R%/scripts/apply_hip_patch.py" || exit /b 1
 
+rem OpenMP 3+ omp.h shim (see hip/compat/include/omp_shim). Via the environment so CMake's
+rem own MSVC defaults (/EHsc /DWIN32 ...) stay intact; -DCMAKE_CXX_FLAGS would replace them.
+set CFLAGS=-I%R%/hip/compat/include/omp_shim
+set CXXFLAGS=-I%R%/hip/compat/include/omp_shim
+
 cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   "-DCMAKE_C_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_CXX_COMPILER=%LLVMBIN%/clang-cl.exe" ^
@@ -22,8 +27,6 @@ cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Re
   "-DCMAKE_HIP_ARCHITECTURES=%ARCH%" ^
   "-DCMAKE_HIP_FLAGS=--rocm-path=%ROCM_PATH% --rocm-device-lib-path=%HIP_DEVICE_LIB_PATH%" ^
   "-DCMAKE_PREFIX_PATH=%ROCM_PATH%" ^
-  "-DCMAKE_C_FLAGS=-I%R%/hip/compat/include/omp_shim" ^
-  "-DCMAKE_CXX_FLAGS=-I%R%/hip/compat/include/omp_shim" ^
   "-DCMAKE_TOOLCHAIN_FILE=%V%/scripts/buildsystems/vcpkg.cmake" ^
   -DVCPKG_TARGET_TRIPLET=x64-windows-release -DVCPKG_MANIFEST_MODE=OFF ^
   "-DCMAKE_INSTALL_PREFIX=%INST%" ^

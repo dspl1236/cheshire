@@ -37,7 +37,19 @@ def patch(path: Path, anchor: str, new: str, *, after: bool = True, once_marker:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
+TRACKED = [
+    "src/cmake/config.hpp.in",
+    "src/CMakeLists.txt",
+    "src/aliceVision/depthMap/CMakeLists.txt",
+    "src/aliceVision/mvsData/ROI.hpp",
+    "src/aliceVision/depthMap/BufPtr.hpp",
+]
+
+
 def main() -> None:
+    # 0. always start from pristine upstream files so re-runs never stack edits
+    subprocess.run(["git", "checkout", "--", *TRACKED], cwd=AV, check=True)
+
     # 1. new files: compat shims + unity TU inside the tree
     dst = AV / "src" / "aliceVision" / "depthMap" / "cuda" / "hip"
     dst.mkdir(parents=True, exist_ok=True)
