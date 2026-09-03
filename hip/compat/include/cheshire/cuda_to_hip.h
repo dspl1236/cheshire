@@ -156,13 +156,16 @@ inline hipError_t cudaMallocPitch(T** devPtr, size_t* pitch, size_t width, size_
 // ---- math constants (math_constants.h) ------------------------------------
 // hip_math_constants.h provides HIP_PI_F etc.; CUDA names are CUDART_*.
 #ifndef CUDART_PI_F
-#define CUDART_PI_F HIP_PI_F
+#define CUDART_PI_F 3.14159265358979323846f
+#define CUDART_PI 3.14159265358979323846
 #endif
 #ifndef CUDART_INF_F
-#define CUDART_INF_F HIP_INF_F
+#define CUDART_INF_F __builtin_inff()
+#define CUDART_INF __builtin_inf()
 #endif
 #ifndef CUDART_NAN_F
-#define CUDART_NAN_F HIP_NAN_F
+#define CUDART_NAN_F __builtin_nanf("")
+#define CUDART_NAN __builtin_nan("")
 #endif
 #ifndef CUDART_MAX_NORMAL_F
 #define CUDART_MAX_NORMAL_F 3.402823466e38f

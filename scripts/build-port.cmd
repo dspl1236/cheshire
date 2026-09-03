@@ -21,5 +21,5 @@ cmake -S "%SRC%" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   "-DCMAKE_HIP_FLAGS=--rocm-path=%ROCM_PATH% --rocm-device-lib-path=%HIP_DEVICE_LIB_PATH%" ^
   %CHESHIRE_CMAKE_EXTRA% ^
   || exit /b 1
-cmake --build "%BLD%" %CHESHIRE_BUILD_VERBOSE% -k 0 || exit /b 1
+cmake --build "%BLD%" %CHESHIRE_BUILD_VERBOSE% -- -k 0 || exit /b 1
 echo PORT BUILD OK

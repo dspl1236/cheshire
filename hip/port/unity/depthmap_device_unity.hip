@@ -1,0 +1,13 @@
+// Cheshire: single device translation unit for AliceVision's depthMap CUDA sources.
+// Windows HIP (ROCm 7.2.1) cannot do relocatable device code (-fgpu-rdc: the
+// clang-offload-bundler/llvm-objcopy step fails on COFF objects), and the kernels
+// reference __constant__ symbols (camera params, patch pattern, gaussian tables)
+// defined in other .cu files. Compiling them as one TU resolves that without RDC.
+// Host .cpp files stay separate: cudaMemcpyToSymbol works across TUs without RDC.
+#include <aliceVision/depthMap/cuda/device/DeviceCameraParams.cu>
+#include <aliceVision/depthMap/cuda/device/DevicePatchPattern.cu>
+#include <aliceVision/depthMap/cuda/imageProcessing/deviceGaussianFilter.cu>
+#include <aliceVision/depthMap/cuda/imageProcessing/deviceColorConversion.cu>
+#include <aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu>
+#include <aliceVision/depthMap/cuda/planeSweeping/deviceDepthSimilarityMap.cu>
+#include <aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu>

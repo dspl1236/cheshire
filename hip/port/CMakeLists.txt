@@ -38,10 +38,17 @@ set(port_host_cpp
 # .cu files are HIP to CMake; host .cpp files include cuda_runtime.h and are compiled as
 # HIP too so the compat shim and hip headers resolve identically (CUDA_SEPARABLE_COMPILATION
 # in upstream implies nvcc handled them; here clang does).
-set_source_files_properties(${port_cu} ${port_host_cpp} PROPERTIES LANGUAGE HIP)
+option(CHESHIRE_HIP_RDC "Use relocatable device code (-fgpu-rdc) instead of the unity device TU. Broken on Windows ROCm 7.2.1." OFF)
+if(CHESHIRE_HIP_RDC)
+  set(port_device_sources ${port_cu})
+else()
+  set(port_device_sources ${CMAKE_CURRENT_SOURCE_DIR}/unity/depthmap_device_unity.hip)
+endif()
+set_source_files_properties(${port_device_sources} ${port_host_cpp} PROPERTIES LANGUAGE HIP)
 
-add_library(cheshire_depthmap_port OBJECT ${port_cu} ${port_host_cpp})
+add_library(cheshire_depthmap_port OBJECT ${port_device_sources} ${port_host_cpp})
 target_include_directories(cheshire_depthmap_port BEFORE PRIVATE
+  ${CHESHIRE_ROOT}/hip/port/overlay          # 2-file patch: __HIPCC__ alongside __NVCC__ (patches/0001)
   ${CHESHIRE_ROOT}/hip/compat/include          # cuda_runtime.h / cuda_fp16.h / math_constants.h shims
   ${CHESHIRE_ROOT}/hip/port/generated          # aliceVision/config.hpp stand-in
   ${AV_SRC}
@@ -55,3 +62,31 @@ target_compile_definitions(cheshire_depthmap_port PRIVATE
   NOMINMAX
 )
 target_link_libraries(cheshire_depthmap_port PRIVATE hip::device)
+
+# nvcc pre-includes cuda_runtime.h (vector types etc.) into every .cu; clang does not, so
+# force-include the compat header. Device-side passes over Boost headers warn about
+# __declspec attributes they cannot honour; silence that noise.
+if(CMAKE_HIP_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  set(CHESHIRE_FORCE_INCLUDE "/FI${CHESHIRE_ROOT}/hip/compat/include/cheshire/cuda_to_hip.h")
+else()
+  set(CHESHIRE_FORCE_INCLUDE "-include${CHESHIRE_ROOT}/hip/compat/include/cheshire/cuda_to_hip.h")
+endif()
+target_compile_options(cheshire_depthmap_port PRIVATE
+  $<$<COMPILE_LANGUAGE:HIP>:${CHESHIRE_FORCE_INCLUDE}>
+  $<$<COMPILE_LANGUAGE:HIP>:-Wno-ignored-attributes>
+  $<$<COMPILE_LANGUAGE:HIP>:-Wno-unknown-attributes>
+)
+
+# AliceVision links its CUDA library with CUDA_SEPARABLE_COMPILATION (kernels reference
+# __constant__ symbols defined in other TUs); the HIP equivalent is relocatable device code.
+if(CHESHIRE_HIP_RDC)
+  if(CMAKE_HIP_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    set(CHESHIRE_RDC "/clang:-fgpu-rdc")
+  else()
+    set(CHESHIRE_RDC "-fgpu-rdc")
+  endif()
+  target_compile_options(cheshire_depthmap_port PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${CHESHIRE_RDC}>)
+  target_link_options(cheshire_depthmap_port INTERFACE ${CHESHIRE_RDC} --hip-link)
+endif()
+# AliceVision's own CMake sets these globally (numeric.hpp enforces them)
+target_compile_definitions(cheshire_depthmap_port PRIVATE EIGEN_MAX_ALIGN_BYTES=0 EIGEN_MAX_STATIC_ALIGN_BYTES=0)
