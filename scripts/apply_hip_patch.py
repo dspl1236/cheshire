@@ -56,7 +56,8 @@ def main() -> None:
     for f in ["cuda_runtime.h", "cuda_fp16.h", "math_constants.h"]:
         shutil.copy2(ROOT / "hip" / "compat" / "include" / f, dst / f)
     (dst / "cheshire").mkdir(exist_ok=True)
-    shutil.copy2(ROOT / "hip" / "compat" / "include" / "cheshire" / "cuda_to_hip.h", dst / "cheshire" / "cuda_to_hip.h")
+    for f in ["cuda_to_hip.h", "bridge.h"]:
+        shutil.copy2(ROOT / "hip" / "compat" / "include" / "cheshire" / f, dst / "cheshire" / f)
     shutil.copy2(ROOT / "hip" / "port" / "unity" / "depthmap_device_unity.hip", dst / "depthmap_device_unity.hip")
     # header overlay (2-line change) applied in place
     for rel in ["src/aliceVision/mvsData/ROI.hpp", "src/aliceVision/depthMap/BufPtr.hpp"]:
