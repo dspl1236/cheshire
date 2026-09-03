@@ -23,3 +23,6 @@ target_link_libraries(bridge_test PRIVATE hip::device)
 
 add_executable(half_tex half_tex.hip)
 target_link_libraries(half_tex PRIVATE hip::device)
+
+add_executable(launch_bench launch_bench.hip)
+target_link_libraries(launch_bench PRIVATE hip::device)

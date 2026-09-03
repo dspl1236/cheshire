@@ -566,6 +566,246 @@ index 294259f..5557992 100644
  #define ALICEVISION_DEPTHMAP_TEXTURE_USE_INTERPOLATION
  
  #ifdef ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF
+diff --git a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
+index 117850f..0402aa6 100644
+--- a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
++++ b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
+@@ -5,6 +5,9 @@
+ // You can obtain one at https://mozilla.org/MPL/2.0/.
+ 
+ #include "deviceSimilarityVolume.hpp"
++#include <chrono>
++#include <cstdlib>
++#include <cstdio>
+ #include "deviceSimilarityVolumeKernels.cuh"
+ 
+ #include <aliceVision/depthMap/cuda/host/divUp.hpp>
+@@ -259,6 +262,18 @@ extern void cuda_volumeRefineSimilarity(CudaDeviceMemoryPitched<TSimRefine, 3>&
+ }
+ 
+ 
++#ifdef CHESHIRE_HIP
++static double cheshire_prof_acc[3]; static int cheshire_prof_calls;
++static bool cheshire_prof_on() { static int v = -1; if (v < 0) { const char* e = std::getenv("CHESHIRE_PROFILE_SGM"); v = (e && e[0] == '1') ? 1 : 0; } return v == 1; }
++static std::chrono::steady_clock::time_point _cp_t0;
++#define CHESHIRE_PROF_BEGIN() if (cheshire_prof_on()) { cudaDeviceSynchronize(); _cp_t0 = std::chrono::steady_clock::now(); }
++#define CHESHIRE_PROF_END(i) if (cheshire_prof_on()) { cudaDeviceSynchronize(); cheshire_prof_acc[i] += std::chrono::duration<double>(std::chrono::steady_clock::now() - _cp_t0).count(); }
++#define CHESHIRE_PROF_REPORT() if (cheshire_prof_on() && (++cheshire_prof_calls % 24 == 0)) std::fprintf(stderr, "[cheshire-prof] SGM aggregate cumulative after %d passes: bestZ %.3f s, getSlice %.3f s, aggregate %.3f s\n", cheshire_prof_calls, cheshire_prof_acc[0], cheshire_prof_acc[1], cheshire_prof_acc[2]);
++#else
++#define CHESHIRE_PROF_BEGIN()
++#define CHESHIRE_PROF_END(i)
++#define CHESHIRE_PROF_REPORT()
++#endif
+ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_volAgr_dmp,
+                                        CudaDeviceMemoryPitched<TSimAcc, 2>& inout_volSliceAccA_dmp,
+                                        CudaDeviceMemoryPitched<TSimAcc, 2>& inout_volSliceAccB_dmp,
+@@ -298,6 +313,64 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+     const dim3 blockVolSlide(blockSizeL, 1, 1);
+     const dim3 gridVolSlide(divUp(volDimX, blockVolSlide.x), volDimZ, 1);
+ 
++#if !defined(TSIM_USE_FLOAT) && !defined(CHESHIRE_SGM_LEGACY)
++    CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForY_dmpPtr   = &inout_volSliceAccA_dmp; // Y slice
++    CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForYm1_dmpPtr = &inout_volSliceAccB_dmp; // Y-1 slice
++
++    // cheshire: fused per-row aggregation, one launch per row instead of three. The column
++    // minima for the next row are produced by atomicMin while the current row is written
++    // (double-buffered 2 x volDimX array, reset with a memset per row), and the raw
++    // similarity is read straight from the input volume. Results are identical to the
++    // three-kernel version below (#else), which is kept for TSIM_USE_FLOAT builds.
++    CudaDeviceMemoryPitched<TSimAcc, 2> bestSim_dmp(CudaSize<2>(volDimX, 2));
++    TSimAcc* bestCur  = bestSim_dmp.getBuffer();
++    TSimAcc* bestNext = (TSimAcc*)(((char*)bestSim_dmp.getBuffer()) + bestSim_dmp.getPitch());
++
++    // first XZ plane (Y=0): copied and reduced once, exactly as before
++    volume_getVolumeXZSlice_kernel<TSimAcc, TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
++        xzSliceForYm1_dmpPtr->getBuffer(), xzSliceForYm1_dmpPtr->getPitch(),
++        in_volSim_dmp.getBuffer(), in_volSim_dmp.getBytesPaddedUpToDim(1), in_volSim_dmp.getBytesPaddedUpToDim(0),
++        volDim_, axisT_, 0 /* Y = 0 */);
++    volume_initVolumeYSlice_kernel<TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
++        out_volAgr_dmp.getBuffer(), out_volAgr_dmp.getBytesPaddedUpToDim(1), out_volAgr_dmp.getBytesPaddedUpToDim(0),
++        volDim_, axisT_, 0, 255);
++    volume_computeBestZInSlice_kernel<<<gridColZ, blockColZ, 0, stream>>>(
++        xzSliceForYm1_dmpPtr->getBuffer(), xzSliceForYm1_dmpPtr->getPitch(), bestCur, volDimX, volDimZ);
++
++    for(int iy = 1; iy < volDimY; ++iy)
++    {
++        const int y = invY ? volDimY - 1 - iy : iy;
++
++        // next row's column minima start at "infinity" (all ones for unsigned int)
++        CHECK_CUDA_RETURN_ERROR(cudaMemsetAsync(bestNext, 0xFF, volDimX * sizeof(TSimAcc), stream));
++
++        CHESHIRE_PROF_BEGIN();
++        volume_agregateCostVolumeAtXinSlicesFused_kernel<<<gridVolSlide, blockVolSlide, 0, stream>>>(
++            rcDeviceMipmapImage.getTextureObject(),
++            (unsigned int)(rcLevelDim.x()),
++            (unsigned int)(rcLevelDim.y()),
++            rcMipmapLevel,
++            in_volSim_dmp.getBuffer(), in_volSim_dmp.getBytesPaddedUpToDim(1), in_volSim_dmp.getBytesPaddedUpToDim(0),
++            xzSliceForY_dmpPtr->getBuffer(), xzSliceForY_dmpPtr->getPitch(),       // out: xzSliceForY
++            xzSliceForYm1_dmpPtr->getBuffer(), xzSliceForYm1_dmpPtr->getPitch(),   // in:  xzSliceForYm1
++            bestCur,                                                               // in:  bestSimInYm1
++            bestNext,                                                              // out: bestSimInY (atomicMin)
++            out_volAgr_dmp.getBuffer(), out_volAgr_dmp.getBytesPaddedUpToDim(1), out_volAgr_dmp.getBytesPaddedUpToDim(0),
++            volDim_, axisT_,
++            sgmParams.stepXY,
++            y,
++            sgmParams.p1,
++            sgmParams.p2Weighting,
++            ySign,
++            filteringIndex,
++            roi);
++        CHESHIRE_PROF_END(2);
++        CHESHIRE_PROF_END(2);
++
++        std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);
++        std::swap(bestCur, bestNext);
++    }
++#else
+     CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForY_dmpPtr   = &inout_volSliceAccA_dmp; // Y slice
+     CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForYm1_dmpPtr = &inout_volSliceAccB_dmp; // Y-1 slice
+     CudaDeviceMemoryPitched<TSimAcc, 2>* bestSimInYm1_dmpPtr  = &inout_volAxisAcc_dmp;   // best sim score along the Y axis for each Z value
+@@ -329,11 +402,14 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+         // For each column: compute the best score
+         // Foreach x:
+         //   bestSimInYm1[x] = min(d_xzSliceForY[1:height])
++        CHESHIRE_PROF_BEGIN();
+         volume_computeBestZInSlice_kernel<<<gridColZ, blockColZ, 0, stream>>>(
+             xzSliceForYm1_dmpPtr->getBuffer(), 
+             xzSliceForYm1_dmpPtr->getPitch(),
+             bestSimInYm1_dmpPtr->getBuffer(),
+             volDimX, volDimZ);
++        CHESHIRE_PROF_END(0);
++        CHESHIRE_PROF_BEGIN();
+ 
+         // Copy the 'z' plane from 'in_volSim_dmp' into 'xzSliceForY'
+         volume_getVolumeXZSlice_kernel<TSimAcc, TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
+@@ -343,6 +419,8 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+             in_volSim_dmp.getBytesPaddedUpToDim(1),
+             in_volSim_dmp.getBytesPaddedUpToDim(0),
+             volDim_, axisT_, y);
++        CHESHIRE_PROF_END(1);
++        CHESHIRE_PROF_BEGIN();
+ 
+         volume_agregateCostVolumeAtXinSlices_kernel<<<gridVolSlide, blockVolSlide, 0, stream>>>(
+             rcDeviceMipmapImage.getTextureObject(),
+@@ -368,6 +446,8 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+ 
+         std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);
+     }
++    CHESHIRE_PROF_REPORT();
++#endif
+     
+     // check cuda last error
+     CHECK_CUDA_ERROR();
+diff --git a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh
+index 7a671e0..478b9e8 100644
+--- a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh
++++ b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh
+@@ -743,5 +743,104 @@ __global__ void volume_agregateCostVolumeAtXinSlices_kernel(const cudaTextureObj
+     *volume_xyz = TSim(val);
+ }
+ 
++#ifndef TSIM_USE_FLOAT
++/**
++ * @brief cheshire: fused per-row SGM path aggregation.
++ * Same arithmetic as volume_agregateCostVolumeAtXinSlices_kernel, but
++ *  - reads the raw similarity straight from the input volume (no per-row slice copy),
++ *  - keeps the column minimum of the row it writes via atomicMin into bestSimInY_d, so the
++ *    per-row best-Z reduction kernel is not needed (bestSimInY_d must be preset to 0xFF..).
++ * One launch per row instead of three; results are identical (TSimAcc = unsigned int).
++ */
++__global__ void volume_agregateCostVolumeAtXinSlicesFused_kernel(const cudaTextureObject_t rcMipmapImage_tex,
++                                                                 const unsigned int rcSgmLevelWidth,
++                                                                 const unsigned int rcSgmLevelHeight,
++                                                                 const float rcMipmapLevel,
++                                                                 const TSim* volSim_d, const int volSim_s, const int volSim_p,
++                                                                 TSimAcc* xzSliceForY_d, int xzSliceForY_p,
++                                                                 const TSimAcc* xzSliceForYm1_d, const int xzSliceForYm1_p,
++                                                                 const TSimAcc* bestSimInYm1_d,
++                                                                 TSimAcc* bestSimInY_d,
++                                                                 TSim* volAgr_d, const int volAgr_s, const int volAgr_p,
++                                                                 const int3 volDim,
++                                                                 const int3 axisT,
++                                                                 const float step,
++                                                                 const int y,
++                                                                 const float P1,
++                                                                 const float _P2,
++                                                                 const int ySign,
++                                                                 const int filteringIndex,
++                                                                 const ROI roi)
++{
++    const int x = blockIdx.x * blockDim.x + threadIdx.x;
++    const int z = blockIdx.y * blockDim.y + threadIdx.y;
++
++    int3 v;
++    (&v.x)[axisT.x] = x;
++    (&v.x)[axisT.y] = y;
++    (&v.x)[axisT.z] = z;
++
++    if (x >= (&volDim.x)[axisT.x] || z >= volDim.z)
++        return;
++
++    // find texture offset
++    const int beginX = (axisT.x == 0) ? roi.x.begin : roi.y.begin;
++    const int beginY = (axisT.x == 0) ? roi.y.begin : roi.x.begin;
++
++    // raw similarity of this cell (what the slice copy used to provide)
++    const TSimAcc simRaw = TSimAcc(*get3DBufferAt(volSim_d, volSim_s, volSim_p, v));
++    TSimAcc* sim_xz = get2DBufferAt(xzSliceForY_d, xzSliceForY_p, x, z);
++    float pathCost = 255.0f;
++
++    if((z >= 1) && (z < volDim.z - 1))
++    {
++        float P2 = 0;
++
++        if(_P2 < 0)
++        {
++          // _P2 convention: use negative value to skip the use of deltaC.
++          P2 = std::abs(_P2);
++        }
++        else
++        {
++          const int imX0 = (beginX + v.x) * step; // current
++          const int imY0 = (beginY + v.y) * step;
++
++          const int imX1 = imX0 - ySign * step * (axisT.y == 0); // M1
++          const int imY1 = imY0 - ySign * step * (axisT.y == 1);
++
++          const float4 gcr0 = tex2DLod<float4>(rcMipmapImage_tex, (float(imX0) + 0.5f) / float(rcSgmLevelWidth), (float(imY0) + 0.5f) / float(rcSgmLevelHeight), rcMipmapLevel);
++          const float4 gcr1 = tex2DLod<float4>(rcMipmapImage_tex, (float(imX1) + 0.5f) / float(rcSgmLevelWidth), (float(imY1) + 0.5f) / float(rcSgmLevelHeight), rcMipmapLevel);
++          const float deltaC = euclideanDist3(gcr0, gcr1);
++
++          // sigmoid f(x) = i + (a - i) * (1 / ( 1 + e^(10 * (x - P2) / w)))
++          P2 = sigmoid(80.f, 255.f, 80.f, _P2, deltaC);
++        }
++
++        const TSimAcc bestCostInColM1 = bestSimInYm1_d[x];
++        const TSimAcc pathCostMDM1 = *get2DBufferAt(xzSliceForYm1_d, xzSliceForYm1_p, x, z - 1); // M1: minus 1 over depths
++        const TSimAcc pathCostMD   = *get2DBufferAt(xzSliceForYm1_d, xzSliceForYm1_p, x, z);
++        const TSimAcc pathCostMDP1 = *get2DBufferAt(xzSliceForYm1_d, xzSliceForYm1_p, x, z + 1); // P1: plus 1 over depths
++        const float minCost = multi_fminf(pathCostMD, pathCostMDM1 + P1, pathCostMDP1 + P1, bestCostInColM1 + P2);
++
++        // if 'pathCostMD' is the minimal value of the depth
++        pathCost = simRaw + minCost - bestCostInColM1;
++    }
++
++    // fill the current slice with the new similarity score, and keep the column minimum for the next row
++    const TSimAcc pathCostAcc = TSimAcc(pathCost);
++    *sim_xz = pathCostAcc;
++    atomicMin(bestSimInY_d + x, pathCostAcc);
++
++    // clamp if TSim = uchar (TSimAcc = unsigned int)
++    pathCost = fminf(255.0f, fmaxf(0.0f, pathCost));
++
++    // aggregate into the final output
++    TSim* volume_xyz = get3DBufferAt(volAgr_d, volAgr_s, volAgr_p, v.x, v.y, v.z);
++    const float val = (float(*volume_xyz) * float(filteringIndex) + pathCost) / float(filteringIndex + 1);
++    *volume_xyz = TSim(val);
++}
++#endif // !TSIM_USE_FLOAT
++
+ } // namespace depthMap
+ } // namespace aliceVision
 diff --git a/src/aliceVision/mvsData/ROI.hpp b/src/aliceVision/mvsData/ROI.hpp
 index e3b2880..b4e5c7b 100644
 --- a/src/aliceVision/mvsData/ROI.hpp

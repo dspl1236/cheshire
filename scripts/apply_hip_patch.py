@@ -45,6 +45,8 @@ TRACKED = [
     "src/aliceVision/depthMap/BufPtr.hpp",
     "src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp",
     "src/aliceVision/depthMap/cuda/host/memory.hpp",
+    "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu",
+    "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh",
 ]
 
 
@@ -91,6 +93,60 @@ def main() -> None:
                    "        auto& pointCloud = viewObs.second;\n", 1)
     if t2 != t:
         dw.write_text(t2, encoding="utf-8", newline="\n")
+
+
+    # 1d. fused SGM path aggregation: one kernel per volume row instead of three
+    #     (profiled on the RX 9070: bestZ 43 %, slice copy 26 %, aggregate 30 % of SGM optimize).
+    #     Kernel text: hip/port/sgm_fused/kernel.cuh.txt; host loop: hip/port/sgm_fused/loop.cu.txt.
+    #     The original three-kernel loop is kept under #else for TSIM_USE_FLOAT / CHESHIRE_SGM_LEGACY.
+    kh = AV / "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh"
+    t = kh.read_text(encoding="utf-8")
+    if "volume_agregateCostVolumeAtXinSlicesFused_kernel" not in t:
+        ktxt = (ROOT / "hip/port/sgm_fused/kernel.cuh.txt").read_text(encoding="utf-8")
+        end = t.rfind("} // namespace depthMap")
+        assert end > 0, "namespace end not found in deviceSimilarityVolumeKernels.cuh"
+        t = t[:end] + ktxt + t[end:]
+        kh.write_text(t, encoding="utf-8", newline="\n")
+    sv = AV / "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu"
+    t = sv.read_text(encoding="utf-8")
+    if "Fused_kernel<<<" not in t:
+        start_marker = "    CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForY_dmpPtr   = &inout_volSliceAccA_dmp; // Y slice\n"
+        end_marker = "        std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);\n    }\n"
+        i0 = t.find(start_marker); i1 = t.find(end_marker, i0)
+        assert i0 > 0 and i1 > i0, "aggregation loop markers not found in deviceSimilarityVolume.cu"
+        i1 += len(end_marker)
+        original = t[i0:i1]
+        fused = (ROOT / "hip/port/sgm_fused/loop.cu.txt").read_text(encoding="utf-8")
+        t = t[:i0] + "#if !defined(TSIM_USE_FLOAT) && !defined(CHESHIRE_SGM_LEGACY)\n" + fused + "#else\n" + original + "#endif\n" + t[i1:]
+        sv.write_text(t, encoding="utf-8", newline="\n")
+
+    # 1c. opt-in SGM aggregation profiling (CHESHIRE_PROFILE_SGM=1): per-kernel wall time with
+    #     device syncs around the three per-row launches. HIP builds only (CHESHIRE_HIP).
+    sv = AV / "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu"
+    t = sv.read_text(encoding="utf-8")
+    prof_defs = """#ifdef CHESHIRE_HIP
+static double cheshire_prof_acc[3]; static int cheshire_prof_calls;
+static bool cheshire_prof_on() { static int v = -1; if (v < 0) { const char* e = std::getenv("CHESHIRE_PROFILE_SGM"); v = (e && e[0] == '1') ? 1 : 0; } return v == 1; }
+static std::chrono::steady_clock::time_point _cp_t0;
+#define CHESHIRE_PROF_BEGIN() if (cheshire_prof_on()) { cudaDeviceSynchronize(); _cp_t0 = std::chrono::steady_clock::now(); }
+#define CHESHIRE_PROF_END(i) if (cheshire_prof_on()) { cudaDeviceSynchronize(); cheshire_prof_acc[i] += std::chrono::duration<double>(std::chrono::steady_clock::now() - _cp_t0).count(); }
+#define CHESHIRE_PROF_REPORT() if (cheshire_prof_on() && (++cheshire_prof_calls % 24 == 0)) std::fprintf(stderr, "[cheshire-prof] SGM aggregate cumulative after %d passes: bestZ %.3f s, getSlice %.3f s, aggregate %.3f s\\n", cheshire_prof_calls, cheshire_prof_acc[0], cheshire_prof_acc[1], cheshire_prof_acc[2]);
+#else
+#define CHESHIRE_PROF_BEGIN()
+#define CHESHIRE_PROF_END(i)
+#define CHESHIRE_PROF_REPORT()
+#endif
+"""
+    if "#define CHESHIRE_PROF_BEGIN" not in t:
+        t = t.replace('#include "deviceSimilarityVolume.hpp"\n',
+                      '#include "deviceSimilarityVolume.hpp"\n#include <chrono>\n#include <cstdlib>\n#include <cstdio>\n', 1)
+        t = t.replace("__host__ void cuda_volumeAggregatePath(", prof_defs + "__host__ void cuda_volumeAggregatePath(", 1)
+        t = t.replace("        volume_computeBestZInSlice_kernel<<<gridColZ, blockColZ, 0, stream>>>(", "        CHESHIRE_PROF_BEGIN();\n        volume_computeBestZInSlice_kernel<<<gridColZ, blockColZ, 0, stream>>>(", 1)
+        t = t.replace("            volDimX, volDimZ);\n", "            volDimX, volDimZ);\n        CHESHIRE_PROF_END(0);\n        CHESHIRE_PROF_BEGIN();\n", 1)
+        t = t.replace("            volDim_, axisT_, y);\n", "            volDim_, axisT_, y);\n        CHESHIRE_PROF_END(1);\n        CHESHIRE_PROF_BEGIN();\n", 1)
+        t = t.replace("            filteringIndex,\n            roi);\n", "            filteringIndex,\n            roi);\n        CHESHIRE_PROF_END(2);\n", 1)
+        t = t.replace("        std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);\n    }\n", "        std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);\n    }\n    CHESHIRE_PROF_REPORT();\n", 1)
+        sv.write_text(t, encoding="utf-8", newline="\n")
 
     # 2. config.hpp.in
     patch(AV / "src/cmake/config.hpp.in",

@@ -1,0 +1,55 @@
+    CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForY_dmpPtr   = &inout_volSliceAccA_dmp; // Y slice
+    CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForYm1_dmpPtr = &inout_volSliceAccB_dmp; // Y-1 slice
+
+    // cheshire: fused per-row aggregation, one launch per row instead of three. The column
+    // minima for the next row are produced by atomicMin while the current row is written
+    // (double-buffered 2 x volDimX array, reset with a memset per row), and the raw
+    // similarity is read straight from the input volume. Results are identical to the
+    // three-kernel version below (#else), which is kept for TSIM_USE_FLOAT builds.
+    CudaDeviceMemoryPitched<TSimAcc, 2> bestSim_dmp(CudaSize<2>(volDimX, 2));
+    TSimAcc* bestCur  = bestSim_dmp.getBuffer();
+    TSimAcc* bestNext = (TSimAcc*)(((char*)bestSim_dmp.getBuffer()) + bestSim_dmp.getPitch());
+
+    // first XZ plane (Y=0): copied and reduced once, exactly as before
+    volume_getVolumeXZSlice_kernel<TSimAcc, TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
+        xzSliceForYm1_dmpPtr->getBuffer(), xzSliceForYm1_dmpPtr->getPitch(),
+        in_volSim_dmp.getBuffer(), in_volSim_dmp.getBytesPaddedUpToDim(1), in_volSim_dmp.getBytesPaddedUpToDim(0),
+        volDim_, axisT_, 0 /* Y = 0 */);
+    volume_initVolumeYSlice_kernel<TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
+        out_volAgr_dmp.getBuffer(), out_volAgr_dmp.getBytesPaddedUpToDim(1), out_volAgr_dmp.getBytesPaddedUpToDim(0),
+        volDim_, axisT_, 0, 255);
+    volume_computeBestZInSlice_kernel<<<gridColZ, blockColZ, 0, stream>>>(
+        xzSliceForYm1_dmpPtr->getBuffer(), xzSliceForYm1_dmpPtr->getPitch(), bestCur, volDimX, volDimZ);
+
+    for(int iy = 1; iy < volDimY; ++iy)
+    {
+        const int y = invY ? volDimY - 1 - iy : iy;
+
+        // next row's column minima start at "infinity" (all ones for unsigned int)
+        CHECK_CUDA_RETURN_ERROR(cudaMemsetAsync(bestNext, 0xFF, volDimX * sizeof(TSimAcc), stream));
+
+        CHESHIRE_PROF_BEGIN();
+        volume_agregateCostVolumeAtXinSlicesFused_kernel<<<gridVolSlide, blockVolSlide, 0, stream>>>(
+            rcDeviceMipmapImage.getTextureObject(),
+            (unsigned int)(rcLevelDim.x()),
+            (unsigned int)(rcLevelDim.y()),
+            rcMipmapLevel,
+            in_volSim_dmp.getBuffer(), in_volSim_dmp.getBytesPaddedUpToDim(1), in_volSim_dmp.getBytesPaddedUpToDim(0),
+            xzSliceForY_dmpPtr->getBuffer(), xzSliceForY_dmpPtr->getPitch(),       // out: xzSliceForY
+            xzSliceForYm1_dmpPtr->getBuffer(), xzSliceForYm1_dmpPtr->getPitch(),   // in:  xzSliceForYm1
+            bestCur,                                                               // in:  bestSimInYm1
+            bestNext,                                                              // out: bestSimInY (atomicMin)
+            out_volAgr_dmp.getBuffer(), out_volAgr_dmp.getBytesPaddedUpToDim(1), out_volAgr_dmp.getBytesPaddedUpToDim(0),
+            volDim_, axisT_,
+            sgmParams.stepXY,
+            y,
+            sgmParams.p1,
+            sgmParams.p2Weighting,
+            ySign,
+            filteringIndex,
+            roi);
+        CHESHIRE_PROF_END(2);
+
+        std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);
+        std::swap(bestCur, bestNext);
+    }

@@ -1,0 +1,99 @@
+#ifndef TSIM_USE_FLOAT
+/**
+ * @brief cheshire: fused per-row SGM path aggregation.
+ * Same arithmetic as volume_agregateCostVolumeAtXinSlices_kernel, but
+ *  - reads the raw similarity straight from the input volume (no per-row slice copy),
+ *  - keeps the column minimum of the row it writes via atomicMin into bestSimInY_d, so the
+ *    per-row best-Z reduction kernel is not needed (bestSimInY_d must be preset to 0xFF..).
+ * One launch per row instead of three; results are identical (TSimAcc = unsigned int).
+ */
+__global__ void volume_agregateCostVolumeAtXinSlicesFused_kernel(const cudaTextureObject_t rcMipmapImage_tex,
+                                                                 const unsigned int rcSgmLevelWidth,
+                                                                 const unsigned int rcSgmLevelHeight,
+                                                                 const float rcMipmapLevel,
+                                                                 const TSim* volSim_d, const int volSim_s, const int volSim_p,
+                                                                 TSimAcc* xzSliceForY_d, int xzSliceForY_p,
+                                                                 const TSimAcc* xzSliceForYm1_d, const int xzSliceForYm1_p,
+                                                                 const TSimAcc* bestSimInYm1_d,
+                                                                 TSimAcc* bestSimInY_d,
+                                                                 TSim* volAgr_d, const int volAgr_s, const int volAgr_p,
+                                                                 const int3 volDim,
+                                                                 const int3 axisT,
+                                                                 const float step,
+                                                                 const int y,
+                                                                 const float P1,
+                                                                 const float _P2,
+                                                                 const int ySign,
+                                                                 const int filteringIndex,
+                                                                 const ROI roi)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int z = blockIdx.y * blockDim.y + threadIdx.y;
+
+    int3 v;
+    (&v.x)[axisT.x] = x;
+    (&v.x)[axisT.y] = y;
+    (&v.x)[axisT.z] = z;
+
+    if (x >= (&volDim.x)[axisT.x] || z >= volDim.z)
+        return;
+
+    // find texture offset
+    const int beginX = (axisT.x == 0) ? roi.x.begin : roi.y.begin;
+    const int beginY = (axisT.x == 0) ? roi.y.begin : roi.x.begin;
+
+    // raw similarity of this cell (what the slice copy used to provide)
+    const TSimAcc simRaw = TSimAcc(*get3DBufferAt(volSim_d, volSim_s, volSim_p, v));
+    TSimAcc* sim_xz = get2DBufferAt(xzSliceForY_d, xzSliceForY_p, x, z);
+    float pathCost = 255.0f;
+
+    if((z >= 1) && (z < volDim.z - 1))
+    {
+        float P2 = 0;
+
+        if(_P2 < 0)
+        {
+          // _P2 convention: use negative value to skip the use of deltaC.
+          P2 = std::abs(_P2);
+        }
+        else
+        {
+          const int imX0 = (beginX + v.x) * step; // current
+          const int imY0 = (beginY + v.y) * step;
+
+          const int imX1 = imX0 - ySign * step * (axisT.y == 0); // M1
+          const int imY1 = imY0 - ySign * step * (axisT.y == 1);
+
+          const float4 gcr0 = tex2DLod<float4>(rcMipmapImage_tex, (float(imX0) + 0.5f) / float(rcSgmLevelWidth), (float(imY0) + 0.5f) / float(rcSgmLevelHeight), rcMipmapLevel);
+          const float4 gcr1 = tex2DLod<float4>(rcMipmapImage_tex, (float(imX1) + 0.5f) / float(rcSgmLevelWidth), (float(imY1) + 0.5f) / float(rcSgmLevelHeight), rcMipmapLevel);
+          const float deltaC = euclideanDist3(gcr0, gcr1);
+
+          // sigmoid f(x) = i + (a - i) * (1 / ( 1 + e^(10 * (x - P2) / w)))
+          P2 = sigmoid(80.f, 255.f, 80.f, _P2, deltaC);
+        }
+
+        const TSimAcc bestCostInColM1 = bestSimInYm1_d[x];
+        const TSimAcc pathCostMDM1 = *get2DBufferAt(xzSliceForYm1_d, xzSliceForYm1_p, x, z - 1); // M1: minus 1 over depths
+        const TSimAcc pathCostMD   = *get2DBufferAt(xzSliceForYm1_d, xzSliceForYm1_p, x, z);
+        const TSimAcc pathCostMDP1 = *get2DBufferAt(xzSliceForYm1_d, xzSliceForYm1_p, x, z + 1); // P1: plus 1 over depths
+        const float minCost = multi_fminf(pathCostMD, pathCostMDM1 + P1, pathCostMDP1 + P1, bestCostInColM1 + P2);
+
+        // if 'pathCostMD' is the minimal value of the depth
+        pathCost = simRaw + minCost - bestCostInColM1;
+    }
+
+    // fill the current slice with the new similarity score, and keep the column minimum for the next row
+    const TSimAcc pathCostAcc = TSimAcc(pathCost);
+    *sim_xz = pathCostAcc;
+    atomicMin(bestSimInY_d + x, pathCostAcc);
+
+    // clamp if TSim = uchar (TSimAcc = unsigned int)
+    pathCost = fminf(255.0f, fmaxf(0.0f, pathCost));
+
+    // aggregate into the final output
+    TSim* volume_xyz = get3DBufferAt(volAgr_d, volAgr_s, volAgr_p, v.x, v.y, v.z);
+    const float val = (float(*volume_xyz) * float(filteringIndex) + pathCost) / float(filteringIndex + 1);
+    *volume_xyz = TSim(val);
+}
+#endif // !TSIM_USE_FLOAT
+
