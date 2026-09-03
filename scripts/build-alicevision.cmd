@@ -17,8 +17,10 @@ python "%R%/scripts/apply_hip_patch.py" || exit /b 1
 
 rem OpenMP 3+ omp.h shim (see hip/compat/include/omp_shim). Via the environment so CMake's
 rem own MSVC defaults (/EHsc /DWIN32 ...) stay intact; -DCMAKE_CXX_FLAGS would replace them.
-set CFLAGS=-I%R%/hip/compat/include/omp_shim
-set CXXFLAGS=-I%R%/hip/compat/include/omp_shim
+rem /arch:AVX2: AliceVision's OptimizeForArchitecture (TARGET_ARCHITECTURE=core) emits /arch:SSE2 (ignored by
+rem clang-cl on x64) while defining __SSE3__ etc., so Eigen picks SSE3 intrinsics the compiler will not inline.
+set CFLAGS=-I%R%/hip/compat/include/omp_shim /arch:AVX2
+set CXXFLAGS=-I%R%/hip/compat/include/omp_shim /arch:AVX2
 
 cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   "-DCMAKE_C_COMPILER=%LLVMBIN%/clang-cl.exe" ^
@@ -30,7 +32,7 @@ cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Re
   "-DCMAKE_TOOLCHAIN_FILE=%V%/scripts/buildsystems/vcpkg.cmake" ^
   -DVCPKG_TARGET_TRIPLET=x64-windows-release -DVCPKG_MANIFEST_MODE=OFF ^
   "-DCMAKE_INSTALL_PREFIX=%INST%" ^
-  -DBUILD_SHARED_LIBS=ON -DTARGET_ARCHITECTURE=core ^
+  -DBUILD_SHARED_LIBS=ON -DTARGET_ARCHITECTURE=none ^
   -DALICEVISION_USE_CUDA=OFF -DALICEVISION_USE_HIP=ON -DALICEVISION_USE_SYCL=OFF ^
   -DALICEVISION_USE_POPSIFT=OFF -DALICEVISION_USE_ONNX_GPU=OFF -DALICEVISION_USE_CCTAG=OFF ^
   -DALICEVISION_USE_OPENCV=OFF -DALICEVISION_USE_APRILTAG=OFF -DALICEVISION_BUILD_TESTS=OFF ^
