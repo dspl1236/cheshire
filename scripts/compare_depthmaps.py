@@ -43,6 +43,7 @@ def main() -> int:
     if not views:
         print("no *_depthMap.exr in", ref); return 2
     ok_all = True
+    rows = []  # for CSV / markdown export next to the test outputs
     print(f"{'view':>11} {'valid ref':>9} {'valid tst':>9} {'agree':>6} {'meanRel':>8} {'medRel':>8} {'p95Rel':>8} {'<0.5%':>6} {'<1%':>6} {'<5%':>6} {'simMAD':>7}")
     for v in views:
         rd, td = ref / f"{v}_depthMap.exr", test / f"{v}_depthMap.exr"
@@ -64,6 +65,9 @@ def main() -> int:
             S1, S2 = read_exr(rs), read_exr(ts)
             sim = f"{np.abs(S1[both] - S2[both]).mean():7.4f}"
         print(f"{v:>11} {vr.mean():9.3f} {vt.mean():9.3f} {agree:6.3f} {rel.mean():8.4f} {np.median(rel):8.4f} {np.percentile(rel, 95):8.4f} {f05:6.3f} {f1:6.3f} {f5:6.3f} {sim:>7}")
+        rows.append(dict(view=v, valid_ref=round(float(vr.mean()), 4), valid_test=round(float(vt.mean()), 4), mask_agree=round(float(agree), 4),
+                         mean_rel=round(float(rel.mean()), 5), median_rel=round(float(np.median(rel)), 5), p95_rel=round(float(np.percentile(rel, 95)), 5),
+                         within_0p5pct=round(float(f05), 4), within_1pct=round(float(f1), 4), within_5pct=round(float(f5), 4), sim_mad=sim.strip()))
         if (rel < a.tol).mean() < 0.98 or agree < 0.95:
             ok_all = False
         if a.png:
@@ -72,6 +76,21 @@ def main() -> int:
             D = np.zeros_like(R); D[both] = np.abs(T[both] - R[both])
             panel = np.concatenate([np.where(vr, R, vmin), np.where(vt, T, vmin), D * (vmax - vmin) / max(D.max(), 1e-9) + vmin], axis=1)
             to_png(panel, out / f"{v}.png", vmin, vmax)
+    # export machine-readable + markdown copies of the table next to the test outputs
+    import csv, json
+    if rows:
+        with open(test / "compare_stats.csv", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
+        med = lambda k: float(np.median([r[k] for r in rows]))
+        summary = dict(views=len(rows), views_mask_agree_ge_0p95=sum(r["mask_agree"] >= 0.95 for r in rows),
+                       median_of_view_median_rel=med("median_rel"), median_of_view_within_1pct=med("within_1pct"),
+                       min_within_1pct=min(r["within_1pct"] for r in rows), max_p95_rel=max(r["p95_rel"] for r in rows),
+                       strict_pass=bool(ok_all), criterion="every view: >=98% of jointly-valid pixels within 1% rel. depth and mask agreement >=95%")
+        (test / "compare_summary.json").write_text(json.dumps(summary, indent=1))
+        with open(test / "compare_stats.md", "w") as f:
+            f.write("| view | valid ref | valid test | mask agree | mean rel | median rel | p95 rel | <0.5% | <1% | <5% | simMAD |\n|---|---|---|---|---|---|---|---|---|---|---|\n")
+            for r in rows:
+                f.write(f"| {r['view']} | {r['valid_ref']:.3f} | {r['valid_test']:.3f} | {r['mask_agree']:.3f} | {r['mean_rel']:.4f} | {r['median_rel']:.4f} | {r['p95_rel']:.4f} | {r['within_0p5pct']:.3f} | {r['within_1pct']:.3f} | {r['within_5pct']:.3f} | {r['sim_mad']} |\n")
     print("RESULT:", "PASS" if ok_all else "FAIL")
     return 0 if ok_all else 1
 

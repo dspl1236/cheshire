@@ -25,7 +25,8 @@ should come only from fast-math / FMA contraction and texture-filter precision.
 |---|---|---|---|
 | monstree-mini6 | GTX 1080 Ti, CUDA 11.3 | 31.9 s (6 views, 6 tiles/view, `--rangeSize 12`) | `data/ref/monstree-mini6/DepthMap/820d.../0.status` |
 | monstree-mini6 | **RX 9070, HIP (Cheshire)** | **21.2 s** (same 6 views / 36 tiles, float4 camera textures) | `build/run-mini6.log` |
-| monstree-full | GTX 1080 Ti | pending | queued on house-pc |
+| monstree-full (41 views) | GTX 1080 Ti, CUDA 11.3 | 105.5 s | `data/ref/monstree-full/DepthMap/*/0.status` |
+| monstree-full (41 views) | **RX 9070, HIP (Cheshire)** | **154.7 s** (float4 camera textures; not yet tuned) | `build/run-full.log` |
 
 ## Results
 
@@ -54,3 +55,27 @@ because **HIP on Windows samples half4 (16-bit float) texture arrays as zeros**
 mipmaps use half4 by default; the HIP build now selects the float4 path (2x camera-image
 VRAM). Revisit when ROCm fixes half textures on Windows, or when profiling shows texture
 bandwidth matters.
+
+### monstree-full (41 views), 2026-09-03 - strict criterion FAIL, agreement otherwise excellent
+
+Full per-view table, CSV/JSON and downscaled best/median/worst panels:
+[docs/validation/monstree-full/index.md](validation/monstree-full/index.md)
+(mini6: [docs/validation/monstree-mini6/index.md](validation/monstree-mini6/index.md)).
+
+* mask agreement >= 95 % on 41/41 views (40 of them exactly 1.000; view 1227295871 at 0.971)
+* per-view **median** relative depth error is 0.0000 on all 41 views
+* fraction within 1 %: median over views 0.988; 34 views >= 0.97; worst view 0.917 (1430763847),
+  then 0.925 (528863451) and 0.928 (1317225462); largest per-view p95 = 7.1 %
+* wall time 154.7 s on the RX 9070 vs 105.5 s on the 1080 Ti (mini6 was 21 s vs 32 s); the
+  41-view run is not yet profiled - float4 textures double image bandwidth and the planner's
+  tile parallelism has not been looked at
+
+The strict bar (every view >= 98 % within 1 %) is not met on the large set. Looking at the
+worst view (`docs/validation/monstree-full/worst_*.png`), the two maps are the same map;
+differences are scattered speckle in low-texture regions with no tile or stripe structure,
+which is the signature of different AliceVision versions (3.1 on the node vs 2026 dev tree)
+and FMA/texture-filter precision, not of a broken kernel. To settle it properly the plan is a
+same-version CUDA reference (build this AliceVision tree with CUDA on a NVIDIA box, or run the
+CUDA backend of this exact tree on the node) - until then the numbers above are the honest
+statement: identical validity masks, zero median error, ~1-8 % of pixels per view differing
+by more than 1 %.
