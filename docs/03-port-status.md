@@ -31,7 +31,7 @@ compat header, plus the two-line header patch.
 
 ## 2026-09-03 (later): full AliceVision build green, DepthMap validated against CUDA
 
-`scriptsuild-alicevision.cmd gfx1201 install` builds all of AliceVision (108 executables)
+`scripts/build-alicevision.cmd gfx1201 install` builds all of AliceVision (108 executables)
 with the HIP backend and installs to `build/av-gfx1201-install`. Extra fixes on the way
 (all in `scripts/apply_hip_patch.py` / `build-alicevision.cmd`): MSVC STL helper shim
 (`hip/compat/stlcompat`), `/arch:AVX2` instead of the OFA `/arch:SSE2`, Boost.WinAPI vs
