@@ -74,3 +74,29 @@ A small allocator policy layer, `bridge/`, used by the HIP depth-map backend:
 
 The bridge is a HIP-only addition inside the ported backend; the CUDA build path is
 untouched, which keeps the port upstreamable.
+
+## Implementation v1 (2026-09-03) — `hip/compat/include/cheshire/bridge.h`
+
+Header-only, wired through the compat layer: AliceVision's `memory.hpp` calls
+`cudaMalloc` / `cudaMallocPitch<T>` / `cudaMalloc3D` / `cudaFree`, and in a HIP build
+those names resolve to `cheshire::bridge::{malloc, mallocPitch, malloc3D, free}`.
+No upstream source change.
+
+* VRAM first; on `hipErrorOutOfMemory` **or** when a soft cap would be exceeded, the block
+  is allocated as pinned mapped host memory and the *device* pointer is returned, so
+  kernels and texture objects use it unchanged.
+* A registry (device ptr -> host ptr, bytes) makes `cudaFree` release the right thing and
+  keeps live VRAM / host byte counts (`bridge::stats()`, `bridge::logSummary()`).
+* Knobs: `CHESHIRE_BRIDGE=0` (off), `CHESHIRE_BRIDGE_VRAM_MB` (soft VRAM cap; the only way
+  to trigger spilling on Windows, where WDDM never reports OOM), `CHESHIRE_BRIDGE_HOST_MB`
+  (spill cap, default 25 % of RAM), `CHESHIRE_BRIDGE_LOG=1`.
+* Host pitch = row bytes rounded up to the device texture pitch alignment (>= 256 B).
+
+`hip/tests/bridge_test.hip` on the RX 9070 with a 1 GB cap: 3 x 700 MB pitched buffers ->
+1 in VRAM, 2 spilled; kernel writes + `tex2D` reads over a spilled buffer verified
+bit-exact; 3D volume path exercised; registry drains to zero after `cudaFree`.
+
+Not yet done (v2): tier-aware placement per buffer class (keep similarity volumes in
+VRAM by shrinking tiles instead of spilling them) and a host-resident camera-mipmap
+tier in `DeviceCache`; the planner (`getNbSimultaneousTiles`) still sizes from
+`hipMemGetInfo * 0.8`.

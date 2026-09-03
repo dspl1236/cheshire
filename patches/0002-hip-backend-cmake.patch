@@ -120,10 +120,10 @@ index 25b80d4..f0ba9d1 100644
          aliceVision_sfmData
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
 new file mode 100644
-index 0000000..0173888
+index 0000000..58b98e2
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,188 @@
 +// Cheshire "conversion API": compile AliceVision's CUDA depth-map sources as HIP
 +// without rewriting them. Force-included (clang -include / clang-cl /FI) or pulled in
 +// through the cuda_runtime.h shim next to this file.
@@ -182,8 +182,13 @@ index 0000000..0173888
 +#define cudaEventElapsedTime hipEventElapsedTime
 +
 +// ---- memory ---------------------------------------------------------------
-+#define cudaMalloc hipMalloc
-+#define cudaFree hipFree
++// Device allocations go through the memory bridge (VRAM first, mapped host RAM when VRAM
++// is short; see bridge.h). CUDA's cudaMalloc has a templated overload (T** devPtr).
++#include <cheshire/bridge.h>
++inline hipError_t cudaMalloc(void** devPtr, size_t bytes) { return cheshire::bridge::malloc(devPtr, bytes); }
++template<class T>
++inline hipError_t cudaMalloc(T** devPtr, size_t bytes) { return cheshire::bridge::malloc(reinterpret_cast<void**>(devPtr), bytes); }
++inline hipError_t cudaFree(void* devPtr) { return cheshire::bridge::free(devPtr); }
 +#define cudaMallocHost hipHostMalloc
 +#define cudaFreeHost hipHostFree
 +#define cudaMallocManaged hipMallocManaged
@@ -193,11 +198,11 @@ index 0000000..0173888
 +// cudaMallocPitch has a templated overload in cuda_runtime.h (AliceVision calls
 +// cudaMallocPitch<Type>(&buf, ...)); HIP only has the C function, so provide both forms.
 +inline hipError_t cudaMallocPitch(void** devPtr, size_t* pitch, size_t width, size_t height)
-+{ return hipMallocPitch(devPtr, pitch, width, height); }
++{ return cheshire::bridge::mallocPitch(devPtr, pitch, width, height); }
 +template<class T>
 +inline hipError_t cudaMallocPitch(T** devPtr, size_t* pitch, size_t width, size_t height)
-+{ return hipMallocPitch(reinterpret_cast<void**>(devPtr), pitch, width, height); }
-+#define cudaMalloc3D hipMalloc3D
++{ return cheshire::bridge::mallocPitch(reinterpret_cast<void**>(devPtr), pitch, width, height); }
++inline hipError_t cudaMalloc3D(hipPitchedPtr* p, hipExtent extent) { return cheshire::bridge::malloc3D(p, extent); }
 +#define cudaMemset hipMemset
 +#define cudaMemsetAsync hipMemsetAsync
 +#define cudaMemset2D hipMemset2D
