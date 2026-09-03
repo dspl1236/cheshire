@@ -11,6 +11,9 @@ JOBS="${JOBS:-$(nproc)}"
 # CMake 4 refuses projects declaring cmake_minimum_required < 3.5 (lz4, OpenMesh); this is
 # honoured by every nested configure the superbuild runs.
 export CMAKE_POLICY_VERSION_MINIMUM=3.5
+# GCC 13: assimp's bundled Draco lacks <cstdint> includes ("uint8_t was not declared")
+ASSIMP_CMAKE="$AV_DEV/src/cmake/deps/assimp.cmake"
+grep -q "include cstdint" "$ASSIMP_CMAKE" || sed -i 's|            -DASSIMP_BUILD_DRACO:BOOL=ON|            -DASSIMP_BUILD_DRACO:BOOL=ON\n            "-DCMAKE_CXX_FLAGS=-include cstdint"|' "$ASSIMP_CMAKE"
 mkdir -p "$AV_BUILD" "$AV_INSTALL/lib"
 ln -sfn lib "$AV_INSTALL/lib64"
 cd "$AV_BUILD"
