@@ -58,7 +58,7 @@ def main() -> None:
     # 2. config.hpp.in
     patch(AV / "src/cmake/config.hpp.in",
           "#define ALICEVISION_HAVE_SYCL() @ALICEVISION_HAVE_SYCL@\n",
-          f"\n{MARK}\n// HIP build: the CUDA depth-map sources are compiled through a CUDA->HIP compat header,\n"
+          "\n// --- cheshire HIP backend ---\n// HIP build: the CUDA depth-map sources are compiled through a CUDA->HIP compat header,\n"
           "// so ALICEVISION_HAVE_CUDA stays 1 and this flag marks the AMD runtime underneath.\n"
           "#define ALICEVISION_HAVE_HIP() @ALICEVISION_HAVE_HIP@\n")
 

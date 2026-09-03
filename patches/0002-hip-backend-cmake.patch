@@ -376,13 +376,18 @@ index e3b2880..b4e5c7b 100644
  {
      os << range.begin << "-" << range.end;
 diff --git a/src/cmake/config.hpp.in b/src/cmake/config.hpp.in
-index 27e3ec0..f803cd2 100644
+index 27e3ec0..39f1833 100644
 --- a/src/cmake/config.hpp.in
 +++ b/src/cmake/config.hpp.in
-@@ -26,6 +26,11 @@
+@@ -26,6 +26,16 @@
  #define ALICEVISION_HAVE_CUDA() @ALICEVISION_HAVE_CUDA@
  #define ALICEVISION_HAVE_SYCL() @ALICEVISION_HAVE_SYCL@
  
++// --- cheshire HIP backend ---
++// HIP build: the CUDA depth-map sources are compiled through a CUDA->HIP compat header,
++// so ALICEVISION_HAVE_CUDA stays 1 and this flag marks the AMD runtime underneath.
++#define ALICEVISION_HAVE_HIP() @ALICEVISION_HAVE_HIP@
++
 +# --- cheshire HIP backend ---
 +// HIP build: the CUDA depth-map sources are compiled through a CUDA->HIP compat header,
 +// so ALICEVISION_HAVE_CUDA stays 1 and this flag marks the AMD runtime underneath.
