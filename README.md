@@ -39,5 +39,7 @@ The cat that grins on any hardware.
   [docs/validation/monstree-full](docs/validation/monstree-full/index.md) (41 views).
 * Memory bridge v1 (`hip/compat/include/cheshire/bridge.h`): VRAM first, mapped system RAM
   when short, hardware-tested.
+* Performance pass (docs/05): 6 views 21.2 s -> 17.4 s, 41 views 154.7 s -> 124.4 s on the RX 9070
+  (CUDA node, GTX 1080 Ti: 31.9 s / 105.5 s). Output bit-identical to the validated build.
 
 See `docs/` for findings, toolchain notes, the bridge design and the port log.

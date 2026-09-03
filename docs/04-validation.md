@@ -24,9 +24,9 @@ should come only from fast-math / FMA contraction and texture-filter precision.
 | dataset | node | DepthMap wall time | notes |
 |---|---|---|---|
 | monstree-mini6 | GTX 1080 Ti, CUDA 11.3 | 31.9 s (6 views, 6 tiles/view, `--rangeSize 12`) | `data/ref/monstree-mini6/DepthMap/820d.../0.status` |
-| monstree-mini6 | **RX 9070, HIP (Cheshire)** | **21.2 s** (same 6 views / 36 tiles, float4 camera textures) | `build/run-mini6.log` |
+| monstree-mini6 | **RX 9070, HIP (Cheshire)** | 21.2 s first validated build; **17.4 s** after tuning (docs/05) | `build/run-mini6.log` |
 | monstree-full (41 views) | GTX 1080 Ti, CUDA 11.3 | 105.5 s | `data/ref/monstree-full/DepthMap/*/0.status` |
-| monstree-full (41 views) | **RX 9070, HIP (Cheshire)** | **154.7 s** (float4 camera textures; not yet tuned) | `build/run-full.log` |
+| monstree-full (41 views) | **RX 9070, HIP (Cheshire)** | 154.7 s first validated build; **124.4 s** after tuning (docs/05) | `build/run-full.log` |
 
 ## Results
 
