@@ -1,0 +1,393 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 8e3e862..9abe172 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -77,6 +77,8 @@ else()
+     trilean_option(ALICEVISION_USE_CUDA "Enable CUDA" ON)
+ endif()
+ trilean_option(ALICEVISION_USE_SYCL "Enable SYCL" AUTO)
++# --- cheshire HIP backend ---
++trilean_option(ALICEVISION_USE_HIP "Enable HIP (AMD GPUs): compiles the CUDA depth-map backend through a CUDA->HIP compat layer" AUTO)
+ option(ALICEVISION_DEPTHMAP_BACKEND "Compile DepthMap component with support for CUDA or SYCL or both" AUTO)
+ trilean_option(ALICEVISION_USE_OPENCV "Enable use of OpenCV algorithms" OFF)
+ trilean_option(ALICEVISION_USE_OPENCV_CONTRIB "Enable use of OpenCV algorithms from extra modules" AUTO)
+@@ -781,6 +783,47 @@ if (ALICEVISION_HAVE_CUDA)
+     endif()
+ endif()
+ 
++
++# ==============================================================================
++# --- cheshire HIP backend ---
++# HIP (AMD ROCm). Only considered when no CUDA toolkit was found. The existing CUDA
++# depth-map sources are compiled as HIP through src/aliceVision/depthMap/cuda/hip/,
++# so from the code's point of view ALICEVISION_HAVE_CUDA is 1.
++# ==============================================================================
++set(ALICEVISION_HAVE_HIP 0)
++if (NOT ALICEVISION_HAVE_CUDA AND NOT ALICEVISION_USE_HIP STREQUAL "OFF")
++    include(CheckLanguage)
++    check_language(HIP)
++    if (NOT CMAKE_HIP_COMPILER)
++        if (ALICEVISION_USE_HIP STREQUAL "ON")
++            message(SEND_ERROR "Failed to find a HIP compiler (set CMAKE_HIP_COMPILER to ROCm's clang++/clang-cl).")
++        endif()
++    else()
++        enable_language(HIP)
++        find_package(hip QUIET)
++        if (hip_FOUND)
++            set(ALICEVISION_HAVE_HIP 1)
++            set(ALICEVISION_HAVE_CUDA 1)
++            list(APPEND ALICEVISION_CUDA_LIBRARIES hip::host)
++            set(ALICEVISION_HIP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aliceVision/depthMap/cuda/hip")
++            # cuda_runtime.h / cuda_fp16.h / math_constants.h shims must win over any real CUDA headers
++            include_directories(BEFORE "${ALICEVISION_HIP_DIR}")
++            add_compile_definitions(__HIP_PLATFORM_AMD__=1)
++            # nvcc pre-includes cuda_runtime.h into every .cu; clang does not
++            if (CMAKE_HIP_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
++                add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:/FI${ALICEVISION_HIP_DIR}/cheshire/cuda_to_hip.h>")
++                add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:/bigobj>")
++            else()
++                add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:-include${ALICEVISION_HIP_DIR}/cheshire/cuda_to_hip.h>")
++            endif()
++            add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:-Wno-ignored-attributes>" "$<$<COMPILE_LANGUAGE:HIP>:-Wno-unknown-attributes>")
++            option(ALICEVISION_HIP_RDC "HIP relocatable device code (-fgpu-rdc) instead of the unity device TU; broken on Windows ROCm 7.2.1" OFF)
++            message(STATUS "HIP found: ${hip_VERSION} (architectures: ${CMAKE_HIP_ARCHITECTURES})")
++        elseif (ALICEVISION_USE_HIP STREQUAL "ON")
++            message(SEND_ERROR "Failed to find the hip CMake package (add the ROCm root to CMAKE_PREFIX_PATH).")
++        endif()
++    endif()
++endif()
+ # ==============================================================================
+ # SYCL/AdaptiveCpp
+ # ==============================================================================
+diff --git a/src/aliceVision/depthMap/BufPtr.hpp b/src/aliceVision/depthMap/BufPtr.hpp
+index 6ead556..eabd2d9 100644
+--- a/src/aliceVision/depthMap/BufPtr.hpp
++++ b/src/aliceVision/depthMap/BufPtr.hpp
+@@ -7,7 +7,7 @@
+ #pragma once
+ 
+ // allows code sharing between NVCC and other compilers
+-#if defined(__NVCC__)
++#if defined(__NVCC__) || defined(__HIPCC__)
+     #define CUDA_HOST_DEVICE __host__ __device__
+     #define CUDA_HOST __host__
+ #else
+diff --git a/src/aliceVision/depthMap/CMakeLists.txt b/src/aliceVision/depthMap/CMakeLists.txt
+index 25b80d4..f0ba9d1 100644
+--- a/src/aliceVision/depthMap/CMakeLists.txt
++++ b/src/aliceVision/depthMap/CMakeLists.txt
+@@ -113,6 +113,32 @@ set(depthMap_cuda_files_sources
+     ${depthMap_cuda_planeSweeping_sources}
+ )
+ 
++# --- cheshire HIP backend ---
++if (ALICEVISION_HAVE_HIP)
++    set(depthMap_hip_device_sources cuda/hip/depthmap_device_unity.hip)
++    if (ALICEVISION_HIP_RDC)
++        set(depthMap_hip_device_sources
++            cuda/device/DeviceCameraParams.cu cuda/device/DevicePatchPattern.cu
++            cuda/imageProcessing/deviceGaussianFilter.cu cuda/imageProcessing/deviceColorConversion.cu
++            cuda/imageProcessing/deviceMipmappedArray.cu
++            cuda/planeSweeping/deviceDepthSimilarityMap.cu cuda/planeSweeping/deviceSimilarityVolume.cu)
++        add_compile_options("$<$<COMPILE_LANGUAGE:HIP>:-fgpu-rdc>")
++        add_link_options(-fgpu-rdc --hip-link)
++    else()
++        # the .cu files are pulled into the unity TU; keep them out of the build
++        set_source_files_properties(
++            cuda/device/DeviceCameraParams.cu cuda/device/DevicePatchPattern.cu
++            cuda/imageProcessing/deviceGaussianFilter.cu cuda/imageProcessing/deviceColorConversion.cu
++            cuda/imageProcessing/deviceMipmappedArray.cu
++            cuda/planeSweeping/deviceDepthSimilarityMap.cu cuda/planeSweeping/deviceSimilarityVolume.cu
++            PROPERTIES HEADER_FILE_ONLY true)
++    endif()
++    # everything that touches the runtime is compiled by the HIP compiler (host + device passes)
++    set_source_files_properties(${depthMap_hip_device_sources} ${depthMap_cuda_host_sources} ${depthMap_cuda_imageProcessing_sources} ${depthMap_cuda_planeSweeping_sources} ${depthMap_cuda_device_sources}
++        PROPERTIES LANGUAGE HIP)
++    list(APPEND depthMap_cuda_files_sources ${depthMap_hip_device_sources})
++endif()
++
+ alicevision_add_library(aliceVision_depthMap_cuda
+     USE_CUDA
+     SOURCES
+@@ -124,7 +150,7 @@ alicevision_add_library(aliceVision_depthMap_cuda
+         aliceVision_mvsUtils
+         aliceVision_system
+         assimp::assimp
+-        CUDA::cudart
++        ${ALICEVISION_CUDA_LIBRARIES}   # CUDA::cudart, or hip::host on a HIP build
+     PRIVATE_LINKS
+         aliceVision_gpu
+         aliceVision_sfmData
+diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
+new file mode 100644
+index 0000000..0173888
+--- /dev/null
++++ b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
+@@ -0,0 +1,183 @@
++// Cheshire "conversion API": compile AliceVision's CUDA depth-map sources as HIP
++// without rewriting them. Force-included (clang -include / clang-cl /FI) or pulled in
++// through the cuda_runtime.h shim next to this file.
++//
++// Style follows llama.cpp's ggml-cuda/vendors/hip.h: a flat macro map from the CUDA
++// runtime names the sources use to their HIP equivalents. Only names that the
++// AliceVision depthMap tree actually uses are mapped (grep-derived, see
++// docs/00-scope-and-findings.md); add to it when a new one shows up in a build error.
++#pragma once
++
++#if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIP_PLATFORM_NVIDIA__)
++#define __HIP_PLATFORM_AMD__ 1
++#endif
++#include <hip/hip_runtime.h>
++#include <hip/hip_fp16.h>
++#include <hip/hip_math_constants.h>
++
++#define CHESHIRE_HIP 1
++
++// ---- error handling -------------------------------------------------------
++#define cudaError_t hipError_t
++#define cudaSuccess hipSuccess
++#define cudaErrorMemoryAllocation hipErrorOutOfMemory
++#define cudaGetErrorString hipGetErrorString
++#define cudaGetErrorName hipGetErrorName
++#define cudaGetLastError hipGetLastError
++#define cudaPeekAtLastError hipPeekAtLastError
++
++// ---- device management ----------------------------------------------------
++#define cudaDeviceProp hipDeviceProp_t
++#define cudaGetDeviceCount hipGetDeviceCount
++#define cudaGetDeviceProperties hipGetDeviceProperties
++#define cudaGetDevice hipGetDevice
++#define cudaSetDevice hipSetDevice
++#define cudaDeviceSynchronize hipDeviceSynchronize
++#define cudaDeviceReset hipDeviceReset
++#define cudaMemGetInfo hipMemGetInfo
++#define cudaOccupancyMaxPotentialBlockSize hipOccupancyMaxPotentialBlockSize
++#define cudaFuncSetCacheConfig hipFuncSetCacheConfig
++#define cudaFuncCachePreferL1 hipFuncCachePreferL1
++#define cudaFuncCachePreferShared hipFuncCachePreferShared
++
++// ---- streams --------------------------------------------------------------
++#define cudaStream_t hipStream_t
++#define cudaStreamCreate hipStreamCreate
++#define cudaStreamCreateWithFlags hipStreamCreateWithFlags
++#define cudaStreamDestroy hipStreamDestroy
++#define cudaStreamSynchronize hipStreamSynchronize
++#define cudaStreamNonBlocking hipStreamNonBlocking
++#define cudaStreamDefault hipStreamDefault
++#define cudaEvent_t hipEvent_t
++#define cudaEventCreate hipEventCreate
++#define cudaEventRecord hipEventRecord
++#define cudaEventSynchronize hipEventSynchronize
++#define cudaEventDestroy hipEventDestroy
++#define cudaEventElapsedTime hipEventElapsedTime
++
++// ---- memory ---------------------------------------------------------------
++#define cudaMalloc hipMalloc
++#define cudaFree hipFree
++#define cudaMallocHost hipHostMalloc
++#define cudaFreeHost hipHostFree
++#define cudaMallocManaged hipMallocManaged
++#define cudaHostAlloc hipHostMalloc
++#define cudaHostAllocMapped hipHostMallocMapped
++#define cudaHostGetDevicePointer hipHostGetDevicePointer
++// cudaMallocPitch has a templated overload in cuda_runtime.h (AliceVision calls
++// cudaMallocPitch<Type>(&buf, ...)); HIP only has the C function, so provide both forms.
++inline hipError_t cudaMallocPitch(void** devPtr, size_t* pitch, size_t width, size_t height)
++{ return hipMallocPitch(devPtr, pitch, width, height); }
++template<class T>
++inline hipError_t cudaMallocPitch(T** devPtr, size_t* pitch, size_t width, size_t height)
++{ return hipMallocPitch(reinterpret_cast<void**>(devPtr), pitch, width, height); }
++#define cudaMalloc3D hipMalloc3D
++#define cudaMemset hipMemset
++#define cudaMemsetAsync hipMemsetAsync
++#define cudaMemset2D hipMemset2D
++#define cudaMemset2DAsync hipMemset2DAsync
++#define cudaMemcpy hipMemcpy
++#define cudaMemcpyAsync hipMemcpyAsync
++#define cudaMemcpy2D hipMemcpy2D
++#define cudaMemcpy2DAsync hipMemcpy2DAsync
++#define cudaMemcpy3D hipMemcpy3D
++#define cudaMemcpy3DAsync hipMemcpy3DAsync
++#define cudaMemcpy3DParms hipMemcpy3DParms
++#define cudaMemcpyToSymbol hipMemcpyToSymbol
++#define cudaMemcpyToSymbolAsync hipMemcpyToSymbolAsync
++#define cudaMemcpyFromSymbol hipMemcpyFromSymbol
++#define cudaMemcpyKind hipMemcpyKind
++#define cudaMemcpyHostToDevice hipMemcpyHostToDevice
++#define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
++#define cudaMemcpyDeviceToDevice hipMemcpyDeviceToDevice
++#define cudaMemcpyHostToHost hipMemcpyHostToHost
++#define cudaMemcpyDefault hipMemcpyDefault
++#define cudaPitchedPtr hipPitchedPtr
++#define make_cudaPitchedPtr make_hipPitchedPtr
++#define cudaExtent hipExtent
++#define make_cudaExtent make_hipExtent
++#define cudaPos hipPos
++#define make_cudaPos make_hipPos
++
++// ---- arrays / mipmaps -----------------------------------------------------
++#define cudaArray hipArray
++#define cudaArray_t hipArray_t
++#define cudaArrayGetInfo hipArrayGetInfo
++#define cudaMallocArray hipMallocArray
++#define cudaFreeArray hipFreeArray
++#define cudaArrayDefault hipArrayDefault
++#define cudaArraySurfaceLoadStore hipArraySurfaceLoadStore
++#define cudaMipmappedArray_t hipMipmappedArray_t
++#define cudaMallocMipmappedArray hipMallocMipmappedArray
++#define cudaFreeMipmappedArray hipFreeMipmappedArray
++#define cudaGetMipmappedArrayLevel hipGetMipmappedArrayLevel
++#define cudaChannelFormatDesc hipChannelFormatDesc
++#define cudaCreateChannelDesc hipCreateChannelDesc
++#define cudaCreateChannelDescHalf hipCreateChannelDescHalf
++#define cudaCreateChannelDescHalf1 hipCreateChannelDescHalf1
++#define cudaCreateChannelDescHalf2 hipCreateChannelDescHalf2
++#define cudaCreateChannelDescHalf4 hipCreateChannelDescHalf4
++#define cudaChannelFormatKindFloat hipChannelFormatKindFloat
++#define cudaChannelFormatKindUnsigned hipChannelFormatKindUnsigned
++#define cudaChannelFormatKindSigned hipChannelFormatKindSigned
++
++// ---- texture / surface objects -------------------------------------------
++#define cudaTextureObject_t hipTextureObject_t
++#define cudaSurfaceObject_t hipSurfaceObject_t
++#define cudaCreateTextureObject hipCreateTextureObject
++#define cudaDestroyTextureObject hipDestroyTextureObject
++#define cudaCreateSurfaceObject hipCreateSurfaceObject
++#define cudaDestroySurfaceObject hipDestroySurfaceObject
++#define cudaResourceDesc hipResourceDesc
++#define cudaTextureDesc hipTextureDesc
++#define cudaResourceViewDesc hipResourceViewDesc
++#define cudaResourceTypeArray hipResourceTypeArray
++#define cudaResourceTypeMipmappedArray hipResourceTypeMipmappedArray
++#define cudaResourceTypeLinear hipResourceTypeLinear
++#define cudaResourceTypePitch2D hipResourceTypePitch2D
++#define cudaAddressModeClamp hipAddressModeClamp
++#define cudaAddressModeWrap hipAddressModeWrap
++#define cudaAddressModeBorder hipAddressModeBorder
++#define cudaAddressModeMirror hipAddressModeMirror
++#define cudaFilterModePoint hipFilterModePoint
++#define cudaFilterModeLinear hipFilterModeLinear
++#define cudaReadModeElementType hipReadModeElementType
++#define cudaReadModeNormalizedFloat hipReadModeNormalizedFloat
++// AliceVision uses these two spellings in places
++#define cudaReadElementType hipReadModeElementType
++#define cudaReadNormalizedFloat hipReadModeNormalizedFloat
++#define cudaBoundaryModeZero hipBoundaryModeZero
++#define cudaBoundaryModeClamp hipBoundaryModeClamp
++#define cudaBoundaryModeTrap hipBoundaryModeTrap
++
++// ---- half precision (names are identical in hip_fp16.h) -------------------
++// __half, __half2, half, half2, __float2half, __half2float: no mapping needed.
++
++// ---- math constants (math_constants.h) ------------------------------------
++// hip_math_constants.h provides HIP_PI_F etc.; CUDA names are CUDART_*.
++#ifndef CUDART_PI_F
++#define CUDART_PI_F 3.14159265358979323846f
++#define CUDART_PI 3.14159265358979323846
++#endif
++#ifndef CUDART_INF_F
++#define CUDART_INF_F __builtin_inff()
++#define CUDART_INF __builtin_inf()
++#endif
++#ifndef CUDART_NAN_F
++#define CUDART_NAN_F __builtin_nanf("")
++#define CUDART_NAN __builtin_nan("")
++#endif
++#ifndef CUDART_MAX_NORMAL_F
++#define CUDART_MAX_NORMAL_F 3.402823466e38f
++#endif
++#ifndef CUDART_MIN_DENORM_F
++#define CUDART_MIN_DENORM_F 1.401298464e-45f
++#endif
++#ifndef CUDART_VERSION
++#define CUDART_VERSION HIP_VERSION
++#endif
++
++// ---- things that are the same in HIP and need no map ----------------------
++// __global__ __device__ __host__ __constant__ __shared__ __forceinline__
++// dim3, blockIdx/blockDim/threadIdx/gridDim, __syncthreads, make_float4 ...
++// tex2D<T>, tex2DLod<T>, surf2Dwrite, atomicAdd ...
+diff --git a/src/aliceVision/depthMap/cuda/hip/cuda_fp16.h b/src/aliceVision/depthMap/cuda/hip/cuda_fp16.h
+new file mode 100644
+index 0000000..06d2a95
+--- /dev/null
++++ b/src/aliceVision/depthMap/cuda/hip/cuda_fp16.h
+@@ -0,0 +1,3 @@
++// Shim: half types come from hip_fp16.h (same names).
++#pragma once
++#include <cheshire/cuda_to_hip.h>
+diff --git a/src/aliceVision/depthMap/cuda/hip/cuda_runtime.h b/src/aliceVision/depthMap/cuda/hip/cuda_runtime.h
+new file mode 100644
+index 0000000..fc9c490
+--- /dev/null
++++ b/src/aliceVision/depthMap/cuda/hip/cuda_runtime.h
+@@ -0,0 +1,3 @@
++// Shim: lets unmodified sources that `#include <cuda_runtime.h>` build as HIP.
++#pragma once
++#include <cheshire/cuda_to_hip.h>
+diff --git a/src/aliceVision/depthMap/cuda/hip/depthmap_device_unity.hip b/src/aliceVision/depthMap/cuda/hip/depthmap_device_unity.hip
+new file mode 100644
+index 0000000..6629cd6
+--- /dev/null
++++ b/src/aliceVision/depthMap/cuda/hip/depthmap_device_unity.hip
+@@ -0,0 +1,13 @@
++// Cheshire: single device translation unit for AliceVision's depthMap CUDA sources.
++// Windows HIP (ROCm 7.2.1) cannot do relocatable device code (-fgpu-rdc: the
++// clang-offload-bundler/llvm-objcopy step fails on COFF objects), and the kernels
++// reference __constant__ symbols (camera params, patch pattern, gaussian tables)
++// defined in other .cu files. Compiling them as one TU resolves that without RDC.
++// Host .cpp files stay separate: cudaMemcpyToSymbol works across TUs without RDC.
++#include <aliceVision/depthMap/cuda/device/DeviceCameraParams.cu>
++#include <aliceVision/depthMap/cuda/device/DevicePatchPattern.cu>
++#include <aliceVision/depthMap/cuda/imageProcessing/deviceGaussianFilter.cu>
++#include <aliceVision/depthMap/cuda/imageProcessing/deviceColorConversion.cu>
++#include <aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu>
++#include <aliceVision/depthMap/cuda/planeSweeping/deviceDepthSimilarityMap.cu>
++#include <aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu>
+diff --git a/src/aliceVision/depthMap/cuda/hip/math_constants.h b/src/aliceVision/depthMap/cuda/hip/math_constants.h
+new file mode 100644
+index 0000000..e7182a6
+--- /dev/null
++++ b/src/aliceVision/depthMap/cuda/hip/math_constants.h
+@@ -0,0 +1,3 @@
++// Shim: CUDART_* constants are mapped onto hip_math_constants.h in cuda_to_hip.h.
++#pragma once
++#include <cheshire/cuda_to_hip.h>
+diff --git a/src/aliceVision/mvsData/ROI.hpp b/src/aliceVision/mvsData/ROI.hpp
+index e3b2880..b4e5c7b 100644
+--- a/src/aliceVision/mvsData/ROI.hpp
++++ b/src/aliceVision/mvsData/ROI.hpp
+@@ -7,7 +7,7 @@
+ #pragma once
+ 
+ // allows code sharing between NVCC and other compilers
+-#if defined(__NVCC__)
++#if defined(__NVCC__) || defined(__HIPCC__)
+     #define CUDA_HOST_DEVICE __host__ __device__
+     #define CUDA_HOST __host__
+     #define CUDA_CEIL(f) ceil(f)
+@@ -206,7 +206,7 @@ CUDA_HOST inline ROI inflateROI(const ROI& roi, float factor) { return ROI(infla
+ 
+ inline ROI intersect(const ROI& a, const ROI& b) { return ROI(intersect(a.x, b.x), intersect(a.y, b.y)); }
+ 
+-#if !defined(__NVCC__)
++#if !defined(__NVCC__) && !defined(__HIPCC__)
+ inline std::ostream& operator<<(std::ostream& os, const Range& range)
+ {
+     os << range.begin << "-" << range.end;
+diff --git a/src/cmake/config.hpp.in b/src/cmake/config.hpp.in
+index 27e3ec0..f803cd2 100644
+--- a/src/cmake/config.hpp.in
++++ b/src/cmake/config.hpp.in
+@@ -26,6 +26,11 @@
+ #define ALICEVISION_HAVE_CUDA() @ALICEVISION_HAVE_CUDA@
+ #define ALICEVISION_HAVE_SYCL() @ALICEVISION_HAVE_SYCL@
+ 
++# --- cheshire HIP backend ---
++// HIP build: the CUDA depth-map sources are compiled through a CUDA->HIP compat header,
++// so ALICEVISION_HAVE_CUDA stays 1 and this flag marks the AMD runtime underneath.
++#define ALICEVISION_HAVE_HIP() @ALICEVISION_HAVE_HIP@
++
+ #define ALICEVISION_DEPTHMAP_BACKEND_CUDA() @ALICEVISION_DEPTHMAP_BACKEND_CUDA@
+ #define ALICEVISION_DEPTHMAP_BACKEND_SYCL() @ALICEVISION_DEPTHMAP_BACKEND_SYCL@
+ 

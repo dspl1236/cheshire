@@ -1,0 +1,38 @@
+@echo off
+rem Full AliceVision build with the HIP depth-map backend (Windows, clang-cl, prebuilt vcpkg deps).
+rem Usage: scripts\build-alicevision.cmd [gfxArch] [configure|build|install]   (default: gfx1201 build)
+setlocal
+call "%~dp0env.cmd"
+set ARCH=%~1
+if "%ARCH%"=="" set ARCH=gfx1201
+set STEP=%~2
+if "%STEP%"=="" set STEP=build
+set R=%CHESHIRE_ROOT:\=/%
+set LLVMBIN=%ROCM_PATH%/lib/llvm/bin
+set V=%R%/tools/vcpkg-deps/x64-windows-release
+set BLD=%R%/build/av-%ARCH%
+set INST=%R%/build/av-%ARCH%-install
+
+python "%R%/scripts/apply_hip_patch.py" || exit /b 1
+
+cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+  "-DCMAKE_C_COMPILER=%LLVMBIN%/clang-cl.exe" ^
+  "-DCMAKE_CXX_COMPILER=%LLVMBIN%/clang-cl.exe" ^
+  "-DCMAKE_HIP_COMPILER=%LLVMBIN%/clang-cl.exe" ^
+  "-DCMAKE_HIP_ARCHITECTURES=%ARCH%" ^
+  "-DCMAKE_HIP_FLAGS=--rocm-path=%ROCM_PATH% --rocm-device-lib-path=%HIP_DEVICE_LIB_PATH%" ^
+  "-DCMAKE_PREFIX_PATH=%ROCM_PATH%" ^
+  "-DCMAKE_TOOLCHAIN_FILE=%V%/scripts/buildsystems/vcpkg.cmake" ^
+  -DVCPKG_TARGET_TRIPLET=x64-windows-release -DVCPKG_MANIFEST_MODE=OFF ^
+  "-DCMAKE_INSTALL_PREFIX=%INST%" ^
+  -DBUILD_SHARED_LIBS=ON -DTARGET_ARCHITECTURE=core ^
+  -DALICEVISION_USE_CUDA=OFF -DALICEVISION_USE_HIP=ON -DALICEVISION_USE_SYCL=OFF ^
+  -DALICEVISION_USE_POPSIFT=OFF -DALICEVISION_USE_ONNX_GPU=OFF -DALICEVISION_USE_CCTAG=OFF ^
+  -DALICEVISION_USE_OPENCV=OFF -DALICEVISION_USE_APRILTAG=OFF -DALICEVISION_BUILD_TESTS=OFF ^
+  -DALICEVISION_BUILD_DOC=OFF ^
+  %CHESHIRE_CMAKE_EXTRA% ^
+  || exit /b 1
+if "%STEP%"=="configure" exit /b 0
+cmake --build "%BLD%" %CHESHIRE_BUILD_VERBOSE% -- -k 0 || exit /b 1
+if "%STEP%"=="build" exit /b 0
+cmake --install "%BLD%" || exit /b 1

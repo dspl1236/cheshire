@@ -1,0 +1,30 @@
+# Port status
+
+## 2026-09-03: the whole `depthMap/cuda` tree compiles as HIP (gfx1201, clang-cl)
+
+`scripts\build-port.cmd` builds `hip/port` -> object library `cheshire_depthmap_port`
+from the **unmodified** upstream sources in `third_party/aliceVision`. Everything the
+port needed, in order of discovery:
+
+| Problem | Fix | Where |
+|---|---|---|
+| sources `#include <cuda_runtime.h>`, `<cuda_fp16.h>`, `<math_constants.h>` | shim headers that pull in `cheshire/cuda_to_hip.h` | `hip/compat/include/` |
+| `cuda*` API names | flat macro map (llama.cpp `vendors/hip.h` style), grep-derived from the tree | `cuda_to_hip.h` |
+| `cudaMallocPitch<Type>(&buf, ...)` (templated overload only exists in CUDA) | inline template overloads | `cuda_to_hip.h` |
+| nvcc pre-includes `cuda_runtime.h`; `.cu` files use `float3` before any include | force-include the compat header (`/FI` or `-include`) | `hip/port/CMakeLists.txt` |
+| `CUDART_PI`, `CUDART_PI_F`, `CUDART_INF_F` | literal / `__builtin_inff()` definitions (hip_math_constants.h has no equivalents) | `cuda_to_hip.h` |
+| `CUDA_HOST_DEVICE` gated on `#if defined(__NVCC__)` in two headers -> `__host__`-only methods called from kernels | overlay copies with `\|\| defined(__HIPCC__)`; unified diff kept for upstream | `hip/port/overlay/`, `patches/0001-hipcc-host-device-macros.patch` |
+| Eigen guard in `numeric.hpp` | `EIGEN_MAX_ALIGN_BYTES=0 EIGEN_MAX_STATIC_ALIGN_BYTES=0` (same as upstream CMake) | `hip/port/CMakeLists.txt` |
+| kernels reference `__constant__` symbols defined in other `.cu` files (upstream uses `CUDA_SEPARABLE_COMPILATION`) | `-fgpu-rdc` is **broken on Windows ROCm 7.2.1** (`clang-offload-bundler` -> `llvm-objcopy`: "user-mapped section open" / "not a valid object file" on COFF). Instead a **unity device TU** includes the 7 `.cu` files; host `.cpp` files stay separate because `cudaMemcpyToSymbol` does not need RDC. `CHESHIRE_HIP_RDC=ON` restores per-file RDC for Linux. | `hip/port/unity/depthmap_device_unity.hip` |
+| Boost headers in the device pass warn about `__declspec` | `-Wno-ignored-attributes -Wno-unknown-attributes` for HIP | `hip/port/CMakeLists.txt` |
+
+Result: 6 objects (5 host + 1 unity device), 0 errors. Upstreamable shape: a
+`ALICEVISION_DEPTHMAP_BACKEND=HIP` value that compiles the existing CUDA sources with the
+compat header, plus the two-line header patch.
+
+## Next
+1. Full AliceVision build with the HIP backend against the prebuilt vcpkg tree
+   (`tools/vcpkg-deps`, MSVC 2026 build), clang-cl as the compiler.
+2. Run `aliceVision_depthMapEstimation` on a real dataset; compare against the CUDA
+   node's output on the same SfM.
+3. Memory bridge inside `DeviceCache` / `DeviceMipmapImage` (docs/02).
