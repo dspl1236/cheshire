@@ -47,6 +47,7 @@ TRACKED = [
     "src/aliceVision/depthMap/cuda/host/memory.hpp",
     "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu",
     "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh",
+    "src/aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu",
 ]
 
 
@@ -77,9 +78,15 @@ def main() -> None:
     #     path in HIP builds (2x camera-image VRAM, handled by the memory bridge).
     mh = AV / "src/aliceVision/depthMap/cuda/host/memory.hpp"
     t = mh.read_text(encoding="utf-8")
-    t2 = t.replace("#define ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF\n",
-                   "#if !defined(__HIP_PLATFORM_AMD__)  // cheshire: half4 textures read as 0 on HIP-Windows; use float4 there\n"
-                   "#define ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF\n#endif\n", 1)
+    t2 = t.replace("// #define ALICEVISION_DEPTHMAP_TEXTURE_USE_UCHAR\n#define ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF\n",
+                   "#if defined(__HIP_PLATFORM_AMD__) && defined(CHESHIRE_TEXTURE_FLOAT4)\n"
+                   "// cheshire escape hatch: 16-byte float4 camera textures (no half conversions anywhere)\n"
+                   "#else\n"
+                   "// half4 textures: on HIP-Windows the mip levels are built through a buffer copy because\n"
+                   "// surf2Dwrite into 16-bit float arrays is broken there (deviceMipmappedArray.cu, CHESHIRE_HIP)\n"
+                   "#define ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF\n"
+                   "#endif\n", 1)
+    assert t2 != t, "memory.hpp texture defines changed upstream"
     if t2 != t:
         mh.write_text(t2, encoding="utf-8", newline="\n")
 
@@ -118,6 +125,32 @@ def main() -> None:
         original = t[i0:i1]
         fused = (ROOT / "hip/port/sgm_fused/loop.cu.txt").read_text(encoding="utf-8")
         t = t[:i0] + "#if !defined(TSIM_USE_FLOAT) && !defined(CHESHIRE_SGM_LEGACY)\n" + fused + "#else\n" + original + "#endif\n" + t[i1:]
+        sv.write_text(t, encoding="utf-8", newline="\n")
+
+    # 1f. mip levels via buffer + cudaMemcpy2DToArray instead of surf2Dwrite (HIP-Windows drops
+    #     surface stores into 16-bit float arrays: hip/tests/surf_probe.hip)
+    ma = AV / "src/aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu"
+    t = ma.read_text(encoding="utf-8")
+    if "createMipmappedArrayLevelToBuffer_kernel" not in t:
+        anchor = "__host__ void cuda_createMipmappedArrayFromImage("
+        assert anchor in t
+        t = t.replace(anchor, (ROOT / "hip/port/sgm_fused/miplevel_kernel.cu.txt").read_text(encoding="utf-8") + anchor, 1)
+        s0 = "        cudaSurfaceObject_t currentLevel_surf;\n"
+        s1 = "        CHECK_CUDA_RETURN_ERROR(cudaDestroyTextureObject(previousLevel_tex));\n"
+        i0 = t.find(s0); i1 = t.find(s1, i0)
+        assert i0 > 0 and i1 > i0, "mip level surface block not found"
+        i1 += len(s1)
+        original = t[i0:i1]
+        t = t[:i0] + "#ifdef CHESHIRE_HIP\n" + (ROOT / "hip/port/sgm_fused/miplevel_host.cu.txt").read_text(encoding="utf-8") + "#else\n" + original + "#endif\n" + t[i1:]
+        ma.write_text(t, encoding="utf-8", newline="\n")
+
+    # 1e. block-height override for the occupancy-derived launch shape (CHESHIRE_BLOCK_Y)
+    t = sv.read_text(encoding="utf-8")
+    old_blk = ("    if(recommendedBlockSize > 32)\n    {\n        const dim3 recommendedBlock(32, divUp(recommendedBlockSize, 32), 1);\n"
+               "        return recommendedBlock;\n    }\n")
+    if "CHESHIRE_BLOCK_Y" not in t:
+        assert old_blk in t, "getMaxPotentialBlockSize body changed upstream"
+        t = t.replace(old_blk, (ROOT / "hip/port/sgm_fused/blocksize.cu.txt").read_text(encoding="utf-8"), 1)
         sv.write_text(t, encoding="utf-8", newline="\n")
 
     # 1c. opt-in SGM aggregation profiling (CHESHIRE_PROFILE_SGM=1): per-kernel wall time with

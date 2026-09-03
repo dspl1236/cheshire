@@ -6,6 +6,9 @@
     // (double-buffered 2 x volDimX array, reset with a memset per row), and the raw
     // similarity is read straight from the input volume. Results are identical to the
     // three-kernel version below (#else), which is kept for TSIM_USE_FLOAT builds.
+    // block: 32 columns x 8 depth planes (the kernel's shared reduction assumes blockDim.x <= 64)
+    const dim3 blockFused(32, 8, 1);
+    const dim3 gridFused(divUp(volDimX, blockFused.x), divUp(volDimZ, blockFused.y), 1);
     CudaDeviceMemoryPitched<TSimAcc, 2> bestSim_dmp(CudaSize<2>(volDimX, 2));
     TSimAcc* bestCur  = bestSim_dmp.getBuffer();
     TSimAcc* bestNext = (TSimAcc*)(((char*)bestSim_dmp.getBuffer()) + bestSim_dmp.getPitch());
@@ -29,7 +32,7 @@
         CHECK_CUDA_RETURN_ERROR(cudaMemsetAsync(bestNext, 0xFF, volDimX * sizeof(TSimAcc), stream));
 
         CHESHIRE_PROF_BEGIN();
-        volume_agregateCostVolumeAtXinSlicesFused_kernel<<<gridVolSlide, blockVolSlide, 0, stream>>>(
+        volume_agregateCostVolumeAtXinSlicesFused_kernel<<<gridFused, blockFused, 0, stream>>>(
             rcDeviceMipmapImage.getTextureObject(),
             (unsigned int)(rcLevelDim.x()),
             (unsigned int)(rcLevelDim.y()),

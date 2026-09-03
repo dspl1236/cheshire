@@ -26,3 +26,9 @@ target_link_libraries(half_tex PRIVATE hip::device)
 
 add_executable(launch_bench launch_bench.hip)
 target_link_libraries(launch_bench PRIVATE hip::device)
+
+add_executable(texfmt_probe texfmt_probe.hip)
+target_link_libraries(texfmt_probe PRIVATE hip::device)
+
+add_executable(surf_probe surf_probe.hip)
+target_link_libraries(surf_probe PRIVATE hip::device)

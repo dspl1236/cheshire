@@ -1,0 +1,12 @@
+        {
+            // cheshire: compute the level into device memory, then copy into the array
+            // (surface stores into half arrays are broken on HIP-Windows, see surf_probe.hip)
+            CudaDeviceMemoryPitched<CudaRGBA, 2> level_dmp(CudaSize<2>(width, height));
+            const dim3 block(16, 16, 1);
+            const dim3 grid(divUp(width, block.x), divUp(height, block.y), 1);
+            createMipmappedArrayLevelToBuffer_kernel<2 /* radius */><<<grid, block>>>(level_dmp.getBuffer(), level_dmp.getPitch(), previousLevel_tex, (unsigned int)(width), (unsigned int)(height));
+            CHECK_CUDA_RETURN_ERROR(cudaDeviceSynchronize());
+            CHECK_CUDA_ERROR();
+            CHECK_CUDA_RETURN_ERROR(cudaMemcpy2DToArray(currentLevelArray, 0, 0, level_dmp.getBytePtr(), level_dmp.getPitch(), width * sizeof(CudaRGBA), height, cudaMemcpyDeviceToDevice));
+        }
+        CHECK_CUDA_RETURN_ERROR(cudaDestroyTextureObject(previousLevel_tex));

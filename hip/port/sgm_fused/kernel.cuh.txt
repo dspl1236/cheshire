@@ -30,14 +30,21 @@ __global__ void volume_agregateCostVolumeAtXinSlicesFused_kernel(const cudaTextu
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int z = blockIdx.y * blockDim.y + threadIdx.y;
 
+    // per-block column minima (shared-memory atomics are cheap; one global atomic per block
+    // and column afterwards instead of one per depth plane: 243 contended atomics -> ~30)
+    __shared__ TSimAcc sBest[64];
+    if (threadIdx.y == 0)
+        sBest[threadIdx.x] = TSimAcc(~TSimAcc(0));
+    __syncthreads();
+
     int3 v;
     (&v.x)[axisT.x] = x;
     (&v.x)[axisT.y] = y;
     (&v.x)[axisT.z] = z;
 
-    if (x >= (&volDim.x)[axisT.x] || z >= volDim.z)
-        return;
-
+    const bool valid = (x < (&volDim.x)[axisT.x]) && (z < volDim.z);
+    if (valid)
+    {
     // find texture offset
     const int beginX = (axisT.x == 0) ? roi.x.begin : roi.y.begin;
     const int beginY = (axisT.x == 0) ? roi.y.begin : roi.x.begin;
@@ -85,7 +92,7 @@ __global__ void volume_agregateCostVolumeAtXinSlicesFused_kernel(const cudaTextu
     // fill the current slice with the new similarity score, and keep the column minimum for the next row
     const TSimAcc pathCostAcc = TSimAcc(pathCost);
     *sim_xz = pathCostAcc;
-    atomicMin(bestSimInY_d + x, pathCostAcc);
+    atomicMin(&sBest[threadIdx.x], pathCostAcc);
 
     // clamp if TSim = uchar (TSimAcc = unsigned int)
     pathCost = fminf(255.0f, fmaxf(0.0f, pathCost));
@@ -94,6 +101,11 @@ __global__ void volume_agregateCostVolumeAtXinSlicesFused_kernel(const cudaTextu
     TSim* volume_xyz = get3DBufferAt(volAgr_d, volAgr_s, volAgr_p, v.x, v.y, v.z);
     const float val = (float(*volume_xyz) * float(filteringIndex) + pathCost) / float(filteringIndex + 1);
     *volume_xyz = TSim(val);
+    } // valid
+
+    __syncthreads();
+    if (threadIdx.y == 0 && x < (&volDim.x)[axisT.x])
+        atomicMin(bestSimInY_d + x, sBest[threadIdx.x]);
 }
 #endif // !TSIM_USE_FLOAT
 

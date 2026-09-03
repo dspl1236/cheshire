@@ -310,10 +310,10 @@ index 0000000..3bf804b
 +}}  // namespace cheshire::bridge
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
 new file mode 100644
-index 0000000..58b98e2
+index 0000000..45d5919
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,190 @@
 +// Cheshire "conversion API": compile AliceVision's CUDA depth-map sources as HIP
 +// without rewriting them. Force-included (clang -include / clang-cl /FI) or pulled in
 +// through the cuda_runtime.h shim next to this file.
@@ -424,6 +424,8 @@ index 0000000..58b98e2
 +#define cudaArray hipArray
 +#define cudaArray_t hipArray_t
 +#define cudaArrayGetInfo hipArrayGetInfo
++#define cudaMemcpy2DToArray hipMemcpy2DToArray
++#define cudaMemcpy2DFromArray hipMemcpy2DFromArray
 +#define cudaMallocArray hipMallocArray
 +#define cudaFreeArray hipFreeArray
 +#define cudaArrayDefault hipArrayDefault
@@ -553,21 +555,127 @@ index 0000000..e7182a6
 +#pragma once
 +#include <cheshire/cuda_to_hip.h>
 diff --git a/src/aliceVision/depthMap/cuda/host/memory.hpp b/src/aliceVision/depthMap/cuda/host/memory.hpp
-index 294259f..5557992 100644
+index 294259f..86728fb 100644
 --- a/src/aliceVision/depthMap/cuda/host/memory.hpp
 +++ b/src/aliceVision/depthMap/cuda/host/memory.hpp
-@@ -7,7 +7,9 @@
+@@ -6,8 +6,13 @@
+ 
  #pragma once
  
- // #define ALICEVISION_DEPTHMAP_TEXTURE_USE_UCHAR
-+#if !defined(__HIP_PLATFORM_AMD__)  // cheshire: half4 textures read as 0 on HIP-Windows; use float4 there
+-// #define ALICEVISION_DEPTHMAP_TEXTURE_USE_UCHAR
++#if defined(__HIP_PLATFORM_AMD__) && defined(CHESHIRE_TEXTURE_FLOAT4)
++// cheshire escape hatch: 16-byte float4 camera textures (no half conversions anywhere)
++#else
++// half4 textures: on HIP-Windows the mip levels are built through a buffer copy because
++// surf2Dwrite into 16-bit float arrays is broken there (deviceMipmappedArray.cu, CHESHIRE_HIP)
  #define ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF
 +#endif
  #define ALICEVISION_DEPTHMAP_TEXTURE_USE_INTERPOLATION
  
  #ifdef ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF
+diff --git a/src/aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu b/src/aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu
+index e059d0d..1e02f37 100644
+--- a/src/aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu
++++ b/src/aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu
+@@ -219,6 +219,67 @@ __global__ void createMipmappedArrayDebugFlatImage_kernel(CudaRGBA* out_flatImag
+ #endif // ALICEVISION_DEPTHMAP_TEXTURE_USE_UCHAR
+ }
+ 
++
++#ifdef CHESHIRE_HIP
++/**
++ * @brief cheshire: same as createMipmappedArrayLevel_kernel but writes into a pitched buffer.
++ * HIP on Windows (ROCm 7.2.1) drops surf2Dwrite stores into 16-bit float arrays, so a mip
++ * level is computed into plain device memory and copied into the array with cudaMemcpy2DToArray.
++ */
++template<int TRadius>
++__global__ void createMipmappedArrayLevelToBuffer_kernel(CudaRGBA* out_level_d, int out_level_p,
++                                                         cudaTextureObject_t in_previousLevel_tex,
++                                                         unsigned int width,
++                                                         unsigned int height)
++{
++    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
++    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
++
++    if(x >= width || y >= height)
++        return;
++
++    const float px = 1.f / float(width);
++    const float py = 1.f / float(height);
++
++    float4 sumColor = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
++    float sumFactor = 0.0f;
++
++#pragma unroll
++    for(int i = -TRadius; i <= TRadius; i++)
++    {
++#pragma unroll
++        for(int j = -TRadius; j <= TRadius; j++)
++        {
++            const float factor = getGauss(1, i + TRadius) * getGauss(1, j + TRadius);
++            const float u = (x + j + 0.5f) * px;
++            const float v = (y + i + 0.5f) * py;
++            const float4 color = tex2D_float4(in_previousLevel_tex, u, v);
++            sumColor = sumColor + color * factor;
++            sumFactor += factor;
++        }
++    }
++
++    const float4 color = sumColor / sumFactor;
++    CudaRGBA* out = get2DBufferAt(out_level_d, out_level_p, x, y);
++
++#ifdef ALICEVISION_DEPTHMAP_TEXTURE_USE_UCHAR
++    out->x = CudaColorBaseType(color.x);
++    out->y = CudaColorBaseType(color.y);
++    out->z = CudaColorBaseType(color.z);
++    out->w = CudaColorBaseType(color.w);
++#else
++#ifdef ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF
++    out->x = __float2half(color.x);
++    out->y = __float2half(color.y);
++    out->z = __float2half(color.z);
++    out->w = __float2half(color.w);
++#else
++    *out = color;
++#endif
++#endif
++}
++#endif // CHESHIRE_HIP
++
+ __host__ void cuda_createMipmappedArrayFromImage(cudaMipmappedArray_t* out_mipmappedArrayPtr,
+                                                  const CudaDeviceMemoryPitched<CudaRGBA, 2>& in_img_dmp,
+                                                  const unsigned int levels)
+@@ -303,6 +364,20 @@ __host__ void cuda_createMipmappedArrayFromImage(cudaMipmappedArray_t* out_mipma
+         }
+ 
+         // generate surface object for current level writing
++#ifdef CHESHIRE_HIP
++        {
++            // cheshire: compute the level into device memory, then copy into the array
++            // (surface stores into half arrays are broken on HIP-Windows, see surf_probe.hip)
++            CudaDeviceMemoryPitched<CudaRGBA, 2> level_dmp(CudaSize<2>(width, height));
++            const dim3 block(16, 16, 1);
++            const dim3 grid(divUp(width, block.x), divUp(height, block.y), 1);
++            createMipmappedArrayLevelToBuffer_kernel<2 /* radius */><<<grid, block>>>(level_dmp.getBuffer(), level_dmp.getPitch(), previousLevel_tex, (unsigned int)(width), (unsigned int)(height));
++            CHECK_CUDA_RETURN_ERROR(cudaDeviceSynchronize());
++            CHECK_CUDA_ERROR();
++            CHECK_CUDA_RETURN_ERROR(cudaMemcpy2DToArray(currentLevelArray, 0, 0, level_dmp.getBytePtr(), level_dmp.getPitch(), width * sizeof(CudaRGBA), height, cudaMemcpyDeviceToDevice));
++        }
++        CHECK_CUDA_RETURN_ERROR(cudaDestroyTextureObject(previousLevel_tex));
++#else
+         cudaSurfaceObject_t currentLevel_surf;
+         {
+             cudaResourceDesc surfRes;
+@@ -329,6 +404,7 @@ __host__ void cuda_createMipmappedArrayFromImage(cudaMipmappedArray_t* out_mipma
+         // destroy temporary CUDA objects
+         CHECK_CUDA_RETURN_ERROR(cudaDestroySurfaceObject(currentLevel_surf));
+         CHECK_CUDA_RETURN_ERROR(cudaDestroyTextureObject(previousLevel_tex));
++#endif
+     }
+ }
+ 
 diff --git a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
-index 117850f..0402aa6 100644
+index 117850f..757c08d 100644
 --- a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
 +++ b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
 @@ -5,6 +5,9 @@
@@ -580,7 +688,32 @@ index 117850f..0402aa6 100644
  #include "deviceSimilarityVolumeKernels.cuh"
  
  #include <aliceVision/depthMap/cuda/host/divUp.hpp>
-@@ -259,6 +262,18 @@ extern void cuda_volumeRefineSimilarity(CudaDeviceMemoryPitched<TSimRefine, 3>&
+@@ -47,7 +50,23 @@ __host__ dim3 getMaxPotentialBlockSize(T kernelFuction)
+ 
+     if(recommendedBlockSize > 32)
+     {
+-        const dim3 recommendedBlock(32, divUp(recommendedBlockSize, 32), 1);
++        dim3 recommendedBlock(32, divUp(recommendedBlockSize, 32), 1);
++#ifdef CHESHIRE_HIP
++        // cheshire: hipOccupancyMaxPotentialBlockSize tends to answer 1024 on RDNA, i.e. 32x32
++        // blocks for register-heavy kernels. CHESHIRE_BLOCK_Y=<n> overrides the block height.
++        static int overrideY = -2;
++        if (overrideY == -2)
++        {
++            const char* e = std::getenv("CHESHIRE_BLOCK_Y");
++            overrideY = e ? std::atoi(e) : 0;
++            const char* p = std::getenv("CHESHIRE_PROFILE_SGM");
++            if (p && p[0] == '1')
++                std::fprintf(stderr, "[cheshire-prof] occupancy block for kernels: 32x%d (min grid %d), CHESHIRE_BLOCK_Y=%d\n",
++                             int(divUp(recommendedBlockSize, 32)), recommendedMinGridSize, overrideY);
++        }
++        if (overrideY > 0)
++            recommendedBlock.y = overrideY;
++#endif
+         return recommendedBlock;
+     }
+ 
+@@ -259,6 +278,18 @@ extern void cuda_volumeRefineSimilarity(CudaDeviceMemoryPitched<TSimRefine, 3>&
  }
  
  
@@ -599,7 +732,7 @@ index 117850f..0402aa6 100644
  __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_volAgr_dmp,
                                         CudaDeviceMemoryPitched<TSimAcc, 2>& inout_volSliceAccA_dmp,
                                         CudaDeviceMemoryPitched<TSimAcc, 2>& inout_volSliceAccB_dmp,
-@@ -298,6 +313,64 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+@@ -298,6 +329,67 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
      const dim3 blockVolSlide(blockSizeL, 1, 1);
      const dim3 gridVolSlide(divUp(volDimX, blockVolSlide.x), volDimZ, 1);
  
@@ -612,6 +745,9 @@ index 117850f..0402aa6 100644
 +    // (double-buffered 2 x volDimX array, reset with a memset per row), and the raw
 +    // similarity is read straight from the input volume. Results are identical to the
 +    // three-kernel version below (#else), which is kept for TSIM_USE_FLOAT builds.
++    // block: 32 columns x 8 depth planes (the kernel's shared reduction assumes blockDim.x <= 64)
++    const dim3 blockFused(32, 8, 1);
++    const dim3 gridFused(divUp(volDimX, blockFused.x), divUp(volDimZ, blockFused.y), 1);
 +    CudaDeviceMemoryPitched<TSimAcc, 2> bestSim_dmp(CudaSize<2>(volDimX, 2));
 +    TSimAcc* bestCur  = bestSim_dmp.getBuffer();
 +    TSimAcc* bestNext = (TSimAcc*)(((char*)bestSim_dmp.getBuffer()) + bestSim_dmp.getPitch());
@@ -635,7 +771,7 @@ index 117850f..0402aa6 100644
 +        CHECK_CUDA_RETURN_ERROR(cudaMemsetAsync(bestNext, 0xFF, volDimX * sizeof(TSimAcc), stream));
 +
 +        CHESHIRE_PROF_BEGIN();
-+        volume_agregateCostVolumeAtXinSlicesFused_kernel<<<gridVolSlide, blockVolSlide, 0, stream>>>(
++        volume_agregateCostVolumeAtXinSlicesFused_kernel<<<gridFused, blockFused, 0, stream>>>(
 +            rcDeviceMipmapImage.getTextureObject(),
 +            (unsigned int)(rcLevelDim.x()),
 +            (unsigned int)(rcLevelDim.y()),
@@ -664,7 +800,7 @@ index 117850f..0402aa6 100644
      CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForY_dmpPtr   = &inout_volSliceAccA_dmp; // Y slice
      CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForYm1_dmpPtr = &inout_volSliceAccB_dmp; // Y-1 slice
      CudaDeviceMemoryPitched<TSimAcc, 2>* bestSimInYm1_dmpPtr  = &inout_volAxisAcc_dmp;   // best sim score along the Y axis for each Z value
-@@ -329,11 +402,14 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+@@ -329,11 +421,14 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
          // For each column: compute the best score
          // Foreach x:
          //   bestSimInYm1[x] = min(d_xzSliceForY[1:height])
@@ -679,7 +815,7 @@ index 117850f..0402aa6 100644
  
          // Copy the 'z' plane from 'in_volSim_dmp' into 'xzSliceForY'
          volume_getVolumeXZSlice_kernel<TSimAcc, TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
-@@ -343,6 +419,8 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+@@ -343,6 +438,8 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
              in_volSim_dmp.getBytesPaddedUpToDim(1),
              in_volSim_dmp.getBytesPaddedUpToDim(0),
              volDim_, axisT_, y);
@@ -688,7 +824,7 @@ index 117850f..0402aa6 100644
  
          volume_agregateCostVolumeAtXinSlices_kernel<<<gridVolSlide, blockVolSlide, 0, stream>>>(
              rcDeviceMipmapImage.getTextureObject(),
-@@ -368,6 +446,8 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+@@ -368,6 +465,8 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
  
          std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);
      }
@@ -698,10 +834,10 @@ index 117850f..0402aa6 100644
      // check cuda last error
      CHECK_CUDA_ERROR();
 diff --git a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh
-index 7a671e0..478b9e8 100644
+index 7a671e0..f700fb3 100644
 --- a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh
 +++ b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh
-@@ -743,5 +743,104 @@ __global__ void volume_agregateCostVolumeAtXinSlices_kernel(const cudaTextureObj
+@@ -743,5 +743,116 @@ __global__ void volume_agregateCostVolumeAtXinSlices_kernel(const cudaTextureObj
      *volume_xyz = TSim(val);
  }
  
@@ -737,14 +873,21 @@ index 7a671e0..478b9e8 100644
 +    const int x = blockIdx.x * blockDim.x + threadIdx.x;
 +    const int z = blockIdx.y * blockDim.y + threadIdx.y;
 +
++    // per-block column minima (shared-memory atomics are cheap; one global atomic per block
++    // and column afterwards instead of one per depth plane: 243 contended atomics -> ~30)
++    __shared__ TSimAcc sBest[64];
++    if (threadIdx.y == 0)
++        sBest[threadIdx.x] = TSimAcc(~TSimAcc(0));
++    __syncthreads();
++
 +    int3 v;
 +    (&v.x)[axisT.x] = x;
 +    (&v.x)[axisT.y] = y;
 +    (&v.x)[axisT.z] = z;
 +
-+    if (x >= (&volDim.x)[axisT.x] || z >= volDim.z)
-+        return;
-+
++    const bool valid = (x < (&volDim.x)[axisT.x]) && (z < volDim.z);
++    if (valid)
++    {
 +    // find texture offset
 +    const int beginX = (axisT.x == 0) ? roi.x.begin : roi.y.begin;
 +    const int beginY = (axisT.x == 0) ? roi.y.begin : roi.x.begin;
@@ -792,7 +935,7 @@ index 7a671e0..478b9e8 100644
 +    // fill the current slice with the new similarity score, and keep the column minimum for the next row
 +    const TSimAcc pathCostAcc = TSimAcc(pathCost);
 +    *sim_xz = pathCostAcc;
-+    atomicMin(bestSimInY_d + x, pathCostAcc);
++    atomicMin(&sBest[threadIdx.x], pathCostAcc);
 +
 +    // clamp if TSim = uchar (TSimAcc = unsigned int)
 +    pathCost = fminf(255.0f, fmaxf(0.0f, pathCost));
@@ -801,6 +944,11 @@ index 7a671e0..478b9e8 100644
 +    TSim* volume_xyz = get3DBufferAt(volAgr_d, volAgr_s, volAgr_p, v.x, v.y, v.z);
 +    const float val = (float(*volume_xyz) * float(filteringIndex) + pathCost) / float(filteringIndex + 1);
 +    *volume_xyz = TSim(val);
++    } // valid
++
++    __syncthreads();
++    if (threadIdx.y == 0 && x < (&volDim.x)[axisT.x])
++        atomicMin(bestSimInY_d + x, sBest[threadIdx.x]);
 +}
 +#endif // !TSIM_USE_FLOAT
 +

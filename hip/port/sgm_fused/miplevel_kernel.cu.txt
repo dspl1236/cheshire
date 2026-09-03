@@ -1,0 +1,61 @@
+
+#ifdef CHESHIRE_HIP
+/**
+ * @brief cheshire: same as createMipmappedArrayLevel_kernel but writes into a pitched buffer.
+ * HIP on Windows (ROCm 7.2.1) drops surf2Dwrite stores into 16-bit float arrays, so a mip
+ * level is computed into plain device memory and copied into the array with cudaMemcpy2DToArray.
+ */
+template<int TRadius>
+__global__ void createMipmappedArrayLevelToBuffer_kernel(CudaRGBA* out_level_d, int out_level_p,
+                                                         cudaTextureObject_t in_previousLevel_tex,
+                                                         unsigned int width,
+                                                         unsigned int height)
+{
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if(x >= width || y >= height)
+        return;
+
+    const float px = 1.f / float(width);
+    const float py = 1.f / float(height);
+
+    float4 sumColor = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float sumFactor = 0.0f;
+
+#pragma unroll
+    for(int i = -TRadius; i <= TRadius; i++)
+    {
+#pragma unroll
+        for(int j = -TRadius; j <= TRadius; j++)
+        {
+            const float factor = getGauss(1, i + TRadius) * getGauss(1, j + TRadius);
+            const float u = (x + j + 0.5f) * px;
+            const float v = (y + i + 0.5f) * py;
+            const float4 color = tex2D_float4(in_previousLevel_tex, u, v);
+            sumColor = sumColor + color * factor;
+            sumFactor += factor;
+        }
+    }
+
+    const float4 color = sumColor / sumFactor;
+    CudaRGBA* out = get2DBufferAt(out_level_d, out_level_p, x, y);
+
+#ifdef ALICEVISION_DEPTHMAP_TEXTURE_USE_UCHAR
+    out->x = CudaColorBaseType(color.x);
+    out->y = CudaColorBaseType(color.y);
+    out->z = CudaColorBaseType(color.z);
+    out->w = CudaColorBaseType(color.w);
+#else
+#ifdef ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF
+    out->x = __float2half(color.x);
+    out->y = __float2half(color.y);
+    out->z = __float2half(color.z);
+    out->w = __float2half(color.w);
+#else
+    *out = color;
+#endif
+#endif
+}
+#endif // CHESHIRE_HIP
+

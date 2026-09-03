@@ -36,7 +36,7 @@ cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Re
   "-DCMAKE_CXX_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_HIP_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_HIP_ARCHITECTURES=%ARCH%" ^
-  "-DCMAKE_HIP_FLAGS=--rocm-path=%ROCM_PATH% --rocm-device-lib-path=%HIP_DEVICE_LIB_PATH%" ^
+  "-DCMAKE_HIP_FLAGS=--rocm-path=%ROCM_PATH% --rocm-device-lib-path=%HIP_DEVICE_LIB_PATH% %CHESHIRE_HIP_EXTRA_FLAGS%" ^
   "-DCMAKE_PREFIX_PATH=%ROCM_PATH%" ^
   "-DCMAKE_TOOLCHAIN_FILE=%V%/scripts/buildsystems/vcpkg.cmake" ^
   -DVCPKG_TARGET_TRIPLET=x64-windows-release -DVCPKG_MANIFEST_MODE=OFF ^

@@ -108,6 +108,8 @@ inline hipError_t cudaMalloc3D(hipPitchedPtr* p, hipExtent extent) { return ches
 #define cudaArray hipArray
 #define cudaArray_t hipArray_t
 #define cudaArrayGetInfo hipArrayGetInfo
+#define cudaMemcpy2DToArray hipMemcpy2DToArray
+#define cudaMemcpy2DFromArray hipMemcpy2DFromArray
 #define cudaMallocArray hipMallocArray
 #define cudaFreeArray hipFreeArray
 #define cudaArrayDefault hipArrayDefault
