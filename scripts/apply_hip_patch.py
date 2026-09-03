@@ -48,6 +48,8 @@ TRACKED = [
     "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu",
     "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolumeKernels.cuh",
     "src/aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu",
+    "src/aliceVision/depthMap/Sgm.cpp",
+    "src/aliceVision/depthMap/Refine.cpp",
 ]
 
 
@@ -144,6 +146,25 @@ def main() -> None:
         t = t[:i0] + "#ifdef CHESHIRE_HIP\n" + (ROOT / "hip/port/sgm_fused/miplevel_host.cu.txt").read_text(encoding="utf-8") + "#else\n" + original + "#endif\n" + t[i1:]
         ma.write_text(t, encoding="utf-8", newline="\n")
 
+    # 1g. opt-in stage-level syncs (CHESHIRE_PROFILE_SGM=1) before the "... done." log lines in
+    #     Sgm.cpp / Refine.cpp so the log timestamps measure GPU stage time without serializing
+    #     every launch (scripts/profile_log.py parses them).
+    import re as _re
+    stage_defs = (
+        "#ifdef CHESHIRE_HIP\n#include <cstdlib>\n"
+        "static bool cheshire_stage_prof() { static int v = -1; if (v < 0) { const char* e = std::getenv(\"CHESHIRE_PROFILE_SGM\"); v = (e && e[0] == '1') ? 1 : 0; } return v == 1; }\n"
+        "#define CHESHIRE_STAGE_SYNC(s) if (cheshire_stage_prof()) cudaStreamSynchronize(s)\n"
+        "#else\n#define CHESHIRE_STAGE_SYNC(s)\n#endif\n")
+    for fname, hdr in [("Sgm.cpp", '#include "Sgm.hpp"\n'), ("Refine.cpp", '#include "Refine.hpp"\n')]:
+        fp = AV / "src/aliceVision/depthMap" / fname
+        t = fp.read_text(encoding="utf-8")
+        if "CHESHIRE_STAGE_SYNC" not in t:
+            assert hdr in t
+            t = t.replace(hdr, hdr + stage_defs, 1)
+            t = _re.sub(r'^(\s*)(ALICEVISION_LOG_INFO\(tile << "(?:SGM |Refine |Color optimize )[^"]* done\."\);)',
+                        r'\1CHESHIRE_STAGE_SYNC(_stream);\n\1\2', t, flags=_re.M)
+            fp.write_text(t, encoding="utf-8", newline="\n")
+
     # 1e. block-height override for the occupancy-derived launch shape (CHESHIRE_BLOCK_Y)
     t = sv.read_text(encoding="utf-8")
     old_blk = ("    if(recommendedBlockSize > 32)\n    {\n        const dim3 recommendedBlock(32, divUp(recommendedBlockSize, 32), 1);\n"
@@ -158,11 +179,11 @@ def main() -> None:
     sv = AV / "src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu"
     t = sv.read_text(encoding="utf-8")
     prof_defs = """#ifdef CHESHIRE_HIP
-static double cheshire_prof_acc[3]; static int cheshire_prof_calls;
+static double cheshire_prof_acc[3]; static int cheshire_prof_calls; static std::mutex cheshire_prof_mutex;
 static bool cheshire_prof_on() { static int v = -1; if (v < 0) { const char* e = std::getenv("CHESHIRE_PROFILE_SGM"); v = (e && e[0] == '1') ? 1 : 0; } return v == 1; }
-static std::chrono::steady_clock::time_point _cp_t0;
+static thread_local std::chrono::steady_clock::time_point _cp_t0;
 #define CHESHIRE_PROF_BEGIN() if (cheshire_prof_on()) { cudaDeviceSynchronize(); _cp_t0 = std::chrono::steady_clock::now(); }
-#define CHESHIRE_PROF_END(i) if (cheshire_prof_on()) { cudaDeviceSynchronize(); cheshire_prof_acc[i] += std::chrono::duration<double>(std::chrono::steady_clock::now() - _cp_t0).count(); }
+#define CHESHIRE_PROF_END(i) if (cheshire_prof_on()) { cudaDeviceSynchronize(); std::lock_guard<std::mutex> _cp_g(cheshire_prof_mutex); cheshire_prof_acc[i] += std::chrono::duration<double>(std::chrono::steady_clock::now() - _cp_t0).count(); }
 #define CHESHIRE_PROF_REPORT() if (cheshire_prof_on() && (++cheshire_prof_calls % 24 == 0)) std::fprintf(stderr, "[cheshire-prof] SGM aggregate cumulative after %d passes: bestZ %.3f s, getSlice %.3f s, aggregate %.3f s\\n", cheshire_prof_calls, cheshire_prof_acc[0], cheshire_prof_acc[1], cheshire_prof_acc[2]);
 #else
 #define CHESHIRE_PROF_BEGIN()
@@ -174,11 +195,6 @@ static std::chrono::steady_clock::time_point _cp_t0;
         t = t.replace('#include "deviceSimilarityVolume.hpp"\n',
                       '#include "deviceSimilarityVolume.hpp"\n#include <chrono>\n#include <cstdlib>\n#include <cstdio>\n', 1)
         t = t.replace("__host__ void cuda_volumeAggregatePath(", prof_defs + "__host__ void cuda_volumeAggregatePath(", 1)
-        t = t.replace("        volume_computeBestZInSlice_kernel<<<gridColZ, blockColZ, 0, stream>>>(", "        CHESHIRE_PROF_BEGIN();\n        volume_computeBestZInSlice_kernel<<<gridColZ, blockColZ, 0, stream>>>(", 1)
-        t = t.replace("            volDimX, volDimZ);\n", "            volDimX, volDimZ);\n        CHESHIRE_PROF_END(0);\n        CHESHIRE_PROF_BEGIN();\n", 1)
-        t = t.replace("            volDim_, axisT_, y);\n", "            volDim_, axisT_, y);\n        CHESHIRE_PROF_END(1);\n        CHESHIRE_PROF_BEGIN();\n", 1)
-        t = t.replace("            filteringIndex,\n            roi);\n", "            filteringIndex,\n            roi);\n        CHESHIRE_PROF_END(2);\n", 1)
-        t = t.replace("        std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);\n    }\n", "        std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);\n    }\n    CHESHIRE_PROF_REPORT();\n", 1)
         sv.write_text(t, encoding="utf-8", newline="\n")
 
     # 2. config.hpp.in

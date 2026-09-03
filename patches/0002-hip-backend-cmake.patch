@@ -123,6 +123,114 @@ index 25b80d4..84dba54 100644
      PRIVATE_LINKS
          aliceVision_gpu
          aliceVision_sfmData
+diff --git a/src/aliceVision/depthMap/Refine.cpp b/src/aliceVision/depthMap/Refine.cpp
+index 64f1f95..6f3d608 100644
+--- a/src/aliceVision/depthMap/Refine.cpp
++++ b/src/aliceVision/depthMap/Refine.cpp
+@@ -5,6 +5,13 @@
+ // You can obtain one at https://mozilla.org/MPL/2.0/.
+ 
+ #include "Refine.hpp"
++#ifdef CHESHIRE_HIP
++#include <cstdlib>
++static bool cheshire_stage_prof() { static int v = -1; if (v < 0) { const char* e = std::getenv("CHESHIRE_PROFILE_SGM"); v = (e && e[0] == '1') ? 1 : 0; } return v == 1; }
++#define CHESHIRE_STAGE_SYNC(s) if (cheshire_stage_prof()) cudaStreamSynchronize(s)
++#else
++#define CHESHIRE_STAGE_SYNC(s)
++#endif
+ 
+ #include <aliceVision/alicevision_omp.hpp>
+ #include <aliceVision/system/Logger.hpp>
+@@ -172,6 +179,8 @@ void Refine::refineRc(const Tile& tile,
+     if (_refineParams.exportIntermediateNormalMaps)
+         computeAndWriteNormalMap(tile, _optimizedDepthSimMap_dmp);
+ 
++    CHESHIRE_STAGE_SYNC(_stream);
++
+     ALICEVISION_LOG_INFO(tile << "Refine depth/sim map done.");
+ }
+ 
+@@ -238,6 +247,8 @@ void Refine::refineAndFuseDepthSimMap(const Tile& tile)
+     // compute sub-pixel sample using a sliding gaussian
+     cuda_volumeRefineBestDepth(_refinedDepthSimMap_dmp, _sgmDepthPixSizeMap_dmp, _volumeRefineSim_dmp, _refineParams, downscaledRoi, _stream);
+ 
++    CHESHIRE_STAGE_SYNC(_stream);
++
+     ALICEVISION_LOG_INFO(tile << "Refine and fuse depth/sim map volume done.");
+ }
+ 
+@@ -268,6 +279,8 @@ void Refine::optimizeDepthSimMap(const Tile& tile)
+                                             downscaledRoi,
+                                             _stream);
+ 
++    CHESHIRE_STAGE_SYNC(_stream);
++
+     ALICEVISION_LOG_INFO(tile << "Color optimize depth/sim map done.");
+ }
+ 
+diff --git a/src/aliceVision/depthMap/Sgm.cpp b/src/aliceVision/depthMap/Sgm.cpp
+index 0564791..d2e3efc 100644
+--- a/src/aliceVision/depthMap/Sgm.cpp
++++ b/src/aliceVision/depthMap/Sgm.cpp
+@@ -5,6 +5,13 @@
+ // You can obtain one at https://mozilla.org/MPL/2.0/.
+ 
+ #include "Sgm.hpp"
++#ifdef CHESHIRE_HIP
++#include <cstdlib>
++static bool cheshire_stage_prof() { static int v = -1; if (v < 0) { const char* e = std::getenv("CHESHIRE_PROFILE_SGM"); v = (e && e[0] == '1') ? 1 : 0; } return v == 1; }
++#define CHESHIRE_STAGE_SYNC(s) if (cheshire_stage_prof()) cudaStreamSynchronize(s)
++#else
++#define CHESHIRE_STAGE_SYNC(s)
++#endif
+ 
+ #include <aliceVision/system/Logger.hpp>
+ #include <aliceVision/mvsUtils/fileIO.hpp>
+@@ -184,6 +191,8 @@ void Sgm::sgmRc(const Tile& tile, const SgmDepthList& tileDepthList)
+         }
+     }
+ 
++    CHESHIRE_STAGE_SYNC(_stream);
++
+     ALICEVISION_LOG_INFO(tile << "SGM depth/thickness map done.");
+ }
+ 
+@@ -197,6 +206,8 @@ void Sgm::smoothThicknessMap(const Tile& tile, const depthMapCommon::RefineParam
+     // in-place result thickness map smoothing with adjacent pixels
+     cuda_depthThicknessSmoothThickness(_depthThicknessMap_dmp, _sgmParams, refineParams, downscaledRoi, _stream);
+ 
++    CHESHIRE_STAGE_SYNC(_stream);
++
+     ALICEVISION_LOG_INFO(tile << "SGM Smooth thickness map done.");
+ }
+ 
+@@ -269,6 +280,8 @@ void Sgm::computeSimilarityVolumes(const Tile& tile, const SgmDepthList& tileDep
+         cuda_volumeUpdateUninitializedSimilarity(_volumeBestSim_dmp, _volumeSecBestSim_dmp, _stream);
+     }
+ 
++    CHESHIRE_STAGE_SYNC(_stream);
++
+     ALICEVISION_LOG_INFO(tile << "SGM Compute similarity volume done.");
+ }
+ 
+@@ -294,6 +307,8 @@ void Sgm::optimizeSimilarityVolume(const Tile& tile, const SgmDepthList& tileDep
+                         downscaledRoi,
+                         _stream);
+ 
++    CHESHIRE_STAGE_SYNC(_stream);
++
+     ALICEVISION_LOG_INFO(tile << "SGM Optimizing volume done.");
+ }
+ 
+@@ -321,6 +336,8 @@ void Sgm::retrieveBestDepth(const Tile& tile, const SgmDepthList& tileDepthList)
+                                  downscaledRoi,
+                                  _stream);
+ 
++    CHESHIRE_STAGE_SYNC(_stream);
++
+     ALICEVISION_LOG_INFO(tile << "SGM Retrieve best depth in volume done.");
+ }
+ 
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/bridge.h b/src/aliceVision/depthMap/cuda/hip/cheshire/bridge.h
 new file mode 100644
 index 0000000..3bf804b
@@ -675,7 +783,7 @@ index e059d0d..1e02f37 100644
  }
  
 diff --git a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
-index 117850f..757c08d 100644
+index 117850f..205a787 100644
 --- a/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
 +++ b/src/aliceVision/depthMap/cuda/planeSweeping/deviceSimilarityVolume.cu
 @@ -5,6 +5,9 @@
@@ -718,11 +826,11 @@ index 117850f..757c08d 100644
  
  
 +#ifdef CHESHIRE_HIP
-+static double cheshire_prof_acc[3]; static int cheshire_prof_calls;
++static double cheshire_prof_acc[3]; static int cheshire_prof_calls; static std::mutex cheshire_prof_mutex;
 +static bool cheshire_prof_on() { static int v = -1; if (v < 0) { const char* e = std::getenv("CHESHIRE_PROFILE_SGM"); v = (e && e[0] == '1') ? 1 : 0; } return v == 1; }
-+static std::chrono::steady_clock::time_point _cp_t0;
++static thread_local std::chrono::steady_clock::time_point _cp_t0;
 +#define CHESHIRE_PROF_BEGIN() if (cheshire_prof_on()) { cudaDeviceSynchronize(); _cp_t0 = std::chrono::steady_clock::now(); }
-+#define CHESHIRE_PROF_END(i) if (cheshire_prof_on()) { cudaDeviceSynchronize(); cheshire_prof_acc[i] += std::chrono::duration<double>(std::chrono::steady_clock::now() - _cp_t0).count(); }
++#define CHESHIRE_PROF_END(i) if (cheshire_prof_on()) { cudaDeviceSynchronize(); std::lock_guard<std::mutex> _cp_g(cheshire_prof_mutex); cheshire_prof_acc[i] += std::chrono::duration<double>(std::chrono::steady_clock::now() - _cp_t0).count(); }
 +#define CHESHIRE_PROF_REPORT() if (cheshire_prof_on() && (++cheshire_prof_calls % 24 == 0)) std::fprintf(stderr, "[cheshire-prof] SGM aggregate cumulative after %d passes: bestZ %.3f s, getSlice %.3f s, aggregate %.3f s\n", cheshire_prof_calls, cheshire_prof_acc[0], cheshire_prof_acc[1], cheshire_prof_acc[2]);
 +#else
 +#define CHESHIRE_PROF_BEGIN()
@@ -752,6 +860,7 @@ index 117850f..757c08d 100644
 +    TSimAcc* bestCur  = bestSim_dmp.getBuffer();
 +    TSimAcc* bestNext = (TSimAcc*)(((char*)bestSim_dmp.getBuffer()) + bestSim_dmp.getPitch());
 +
++    CHESHIRE_PROF_BEGIN();  // profiling: whole pass (one sync before, one after)
 +    // first XZ plane (Y=0): copied and reduced once, exactly as before
 +    volume_getVolumeXZSlice_kernel<TSimAcc, TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
 +        xzSliceForYm1_dmpPtr->getBuffer(), xzSliceForYm1_dmpPtr->getPitch(),
@@ -770,7 +879,6 @@ index 117850f..757c08d 100644
 +        // next row's column minima start at "infinity" (all ones for unsigned int)
 +        CHECK_CUDA_RETURN_ERROR(cudaMemsetAsync(bestNext, 0xFF, volDimX * sizeof(TSimAcc), stream));
 +
-+        CHESHIRE_PROF_BEGIN();
 +        volume_agregateCostVolumeAtXinSlicesFused_kernel<<<gridFused, blockFused, 0, stream>>>(
 +            rcDeviceMipmapImage.getTextureObject(),
 +            (unsigned int)(rcLevelDim.x()),
@@ -790,45 +898,20 @@ index 117850f..757c08d 100644
 +            ySign,
 +            filteringIndex,
 +            roi);
-+        CHESHIRE_PROF_END(2);
-+        CHESHIRE_PROF_END(2);
 +
 +        std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);
 +        std::swap(bestCur, bestNext);
 +    }
++    CHESHIRE_PROF_END(2);
++    CHESHIRE_PROF_REPORT();
 +#else
      CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForY_dmpPtr   = &inout_volSliceAccA_dmp; // Y slice
      CudaDeviceMemoryPitched<TSimAcc, 2>* xzSliceForYm1_dmpPtr = &inout_volSliceAccB_dmp; // Y-1 slice
      CudaDeviceMemoryPitched<TSimAcc, 2>* bestSimInYm1_dmpPtr  = &inout_volAxisAcc_dmp;   // best sim score along the Y axis for each Z value
-@@ -329,11 +421,14 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
-         // For each column: compute the best score
-         // Foreach x:
-         //   bestSimInYm1[x] = min(d_xzSliceForY[1:height])
-+        CHESHIRE_PROF_BEGIN();
-         volume_computeBestZInSlice_kernel<<<gridColZ, blockColZ, 0, stream>>>(
-             xzSliceForYm1_dmpPtr->getBuffer(), 
-             xzSliceForYm1_dmpPtr->getPitch(),
-             bestSimInYm1_dmpPtr->getBuffer(),
-             volDimX, volDimZ);
-+        CHESHIRE_PROF_END(0);
-+        CHESHIRE_PROF_BEGIN();
- 
-         // Copy the 'z' plane from 'in_volSim_dmp' into 'xzSliceForY'
-         volume_getVolumeXZSlice_kernel<TSimAcc, TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
-@@ -343,6 +438,8 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
-             in_volSim_dmp.getBytesPaddedUpToDim(1),
-             in_volSim_dmp.getBytesPaddedUpToDim(0),
-             volDim_, axisT_, y);
-+        CHESHIRE_PROF_END(1);
-+        CHESHIRE_PROF_BEGIN();
- 
-         volume_agregateCostVolumeAtXinSlices_kernel<<<gridVolSlide, blockVolSlide, 0, stream>>>(
-             rcDeviceMipmapImage.getTextureObject(),
-@@ -368,6 +465,8 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
+@@ -368,6 +460,7 @@ __host__ void cuda_volumeAggregatePath(CudaDeviceMemoryPitched<TSim, 3>& out_vol
  
          std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);
      }
-+    CHESHIRE_PROF_REPORT();
 +#endif
      
      // check cuda last error

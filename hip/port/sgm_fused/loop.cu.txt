@@ -13,6 +13,7 @@
     TSimAcc* bestCur  = bestSim_dmp.getBuffer();
     TSimAcc* bestNext = (TSimAcc*)(((char*)bestSim_dmp.getBuffer()) + bestSim_dmp.getPitch());
 
+    CHESHIRE_PROF_BEGIN();  // profiling: whole pass (one sync before, one after)
     // first XZ plane (Y=0): copied and reduced once, exactly as before
     volume_getVolumeXZSlice_kernel<TSimAcc, TSim><<<gridVolXZ, blockVolXZ, 0, stream>>>(
         xzSliceForYm1_dmpPtr->getBuffer(), xzSliceForYm1_dmpPtr->getPitch(),
@@ -31,7 +32,6 @@
         // next row's column minima start at "infinity" (all ones for unsigned int)
         CHECK_CUDA_RETURN_ERROR(cudaMemsetAsync(bestNext, 0xFF, volDimX * sizeof(TSimAcc), stream));
 
-        CHESHIRE_PROF_BEGIN();
         volume_agregateCostVolumeAtXinSlicesFused_kernel<<<gridFused, blockFused, 0, stream>>>(
             rcDeviceMipmapImage.getTextureObject(),
             (unsigned int)(rcLevelDim.x()),
@@ -51,8 +51,9 @@
             ySign,
             filteringIndex,
             roi);
-        CHESHIRE_PROF_END(2);
 
         std::swap(xzSliceForYm1_dmpPtr, xzSliceForY_dmpPtr);
         std::swap(bestCur, bestNext);
     }
+    CHESHIRE_PROF_END(2);
+    CHESHIRE_PROF_REPORT();
