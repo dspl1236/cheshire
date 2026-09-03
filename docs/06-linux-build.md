@@ -61,3 +61,38 @@ Linux binaries need a native-Linux AMD machine for a run-through.
 * `-fgpu-rdc` (relocatable device code) is expected to work on Linux; the unity device TU is
   still the default (`ALICEVISION_HIP_RDC=ON` switches).
 * The Boost.WinAPI define block in the patch is `if (WIN32)`-guarded and does nothing here.
+
+## Result (2026-09-03)
+
+* Dependency superbuild: OK after three generic fixes (CMake 4 policy floor for lz4/OpenMesh,
+  `-include cstdint` for assimp's Draco on GCC 13, pybind11 needed by OpenImageIO). About
+  40 minutes on 12 threads. 157 libraries in `/opt/AliceVision_deps`.
+* AliceVision + HIP backend: **671/671 targets, 0 failures** on the first full pass
+  (after `ALICEVISION_BUILD_LIDAR=OFF`; E57 was excluded from the deps). HIP 7.2.26015,
+  targets `gfx1201;gfx1200;gfx1100;gfx1101;gfx1102` in one fat binary. The Linux build
+  was noticeably less trouble than Windows: no STL shim, no OpenMP shim, no arch flag issue.
+* Bundle: `cmake --build . --target bundle` -> `/opt/AliceVision_hip/bundle` (167 MB;
+  bin/ with 208 tool entries, lib/ including `libamdhip64.so.7`, `libhsa-runtime64.so.1`,
+  `libamd_comgr`, share/). Run it like the Meshroom tarball: `LD_LIBRARY_PATH=<bundle>/lib`
+  and `ALICEVISION_ROOT=<bundle>`.
+* Tarball: `build/cheshire-alicevision-hip-linux-x64-rocm7.2-<commit>.tar.gz` (60 MB),
+  also staged on `house-pc:~/apps/cheshire/`. It loads and runs its CPU tools on Mint 22.
+* Under WSL the bundle finds the GPU (`hardwareResources` reports the RX 9070 through the
+  HIP runtime) and `depthMapEstimation` fails exactly where expected, at the first array /
+  texture creation: `CUDA Error: operation not supported`. A native-Linux AMD box is
+  needed for the first real Linux depth-map run; the kernels are the Windows-validated ones.
+
+## Deploying to an AMD node
+
+1. Unpack the tarball to `~/apps/cheshire/bundle`; the ROCm user-space runtime is inside the
+   bundle, but the **amdgpu kernel driver** must be present (Ubuntu 24.04 stock kernel 6.8+
+   is fine for RDNA3; RDNA4 wants the ROCm 7.2 `amdgpu-dkms` or a 6.12+ kernel) and the
+   service user must be in the `render` and `video` groups.
+2. Meshroom must match the AliceVision generation: this tree is AliceVision 3.4-dev, and the
+   node's Meshroom 2023.3.0 graph passes options these binaries no longer accept
+   (`--sgmFilteringAxes`). Use a Meshroom release built for AliceVision >= 3.3 (2025.x) and
+   point it at the bundle's `bin`.
+3. Replace the `nvidia-smi` precondition in `reconstruct` with `scripts/linux/gpu-precheck.sh`
+   (amd-smi / rocm-smi / nvidia-smi, whichever exists) and the UI's GPU tiles accordingly.
+4. Validate with `scripts/linux/run-depthmap.sh <bundle> <cache> <out> <reference DepthMap dir>`
+   on a copied Meshroom cache (`data/ref/monstree-*` here), same procedure as docs/04.
