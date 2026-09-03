@@ -34,7 +34,7 @@ cmake "$AV_DEV" \
   -DAV_BUILD_ONNXRUNTIME:BOOL=OFF \
   -DAV_BUILD_FFMPEG:BOOL=OFF \
   -DAV_BUILD_VPX:BOOL=OFF \
-  -DAV_BUILD_PYBIND11:BOOL=OFF \
+  -DAV_BUILD_PYBIND11:BOOL=ON \
   -DAV_BUILD_SWIG:BOOL=OFF \
   -DPython_EXECUTABLE="$(command -v python3)"
 cmake --build . --parallel "$JOBS"
