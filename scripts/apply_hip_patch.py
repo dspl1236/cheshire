@@ -50,6 +50,9 @@ TRACKED = [
     "src/aliceVision/depthMap/cuda/imageProcessing/deviceMipmappedArray.cu",
     "src/aliceVision/depthMap/Sgm.cpp",
     "src/aliceVision/depthMap/Refine.cpp",
+    "src/aliceVision/mvsUtils/ImagesCache.hpp",
+    "src/aliceVision/mvsUtils/ImagesCache.cpp",
+    "src/aliceVision/depthMap/DepthMapEstimator.cpp",
 ]
 
 
@@ -164,6 +167,31 @@ def main() -> None:
             t = _re.sub(r'^(\s*)(ALICEVISION_LOG_INFO\(tile << "(?:SGM |Refine |Color optimize )[^"]* done\."\);)',
                         r'\1CHESHIRE_STAGE_SYNC(_stream);\n\1\2', t, flags=_re.M)
             fp.write_text(t, encoding="utf-8", newline="\n")
+
+    # 1h. parallel image prefetch per batch (image cache slot lock + omp prefetch loop)
+    ich = AV / "src/aliceVision/mvsUtils/ImagesCache.hpp"
+    t = ich.read_text(encoding="utf-8")
+    if "_slotMutex" not in t:
+        assert "    std::vector<std::mutex> _imagesMutexes;\n" in t
+        t = t.replace("    std::vector<std::mutex> _imagesMutexes;\n",
+                      "    std::vector<std::mutex> _imagesMutexes;\n    std::mutex _slotMutex;  // cheshire: slot bookkeeping, allows parallel loads of different cameras\n", 1)
+        ich.write_text(t, encoding="utf-8", newline="\n")
+    icc = AV / "src/aliceVision/mvsUtils/ImagesCache.cpp"
+    t = icc.read_text(encoding="utf-8")
+    if "_slotMutex" not in t:
+        f0 = t.find("void ImagesCache<Image>::refreshData(int camId)\n{")
+        f1 = t.find("template<typename Image>\nvoid ImagesCache<Image>::refreshImage_sync", f0)
+        assert f0 > 0 and f1 > f0, "refreshData not found"
+        t = t[:f0] + (ROOT / "hip/port/sgm_fused/imagescache_refresh.cpp.txt").read_text(encoding="utf-8") + "\n" + t[f1:]
+        icc.write_text(t, encoding="utf-8", newline="\n")
+    dme = AV / "src/aliceVision/depthMap/DepthMapEstimator.cpp"
+    t = dme.read_text(encoding="utf-8")
+    if "batchCams" not in t:
+        anchor = "        // load tile R and corresponding T cameras in device cache\n"
+        assert anchor in t, "prefetch anchor not found"
+        t = t.replace(anchor, (ROOT / "hip/port/sgm_fused/prefetch.cpp.txt").read_text(encoding="utf-8") + anchor, 1)
+        t = t.replace('#include "DepthMapEstimator.hpp"\n', '#include "DepthMapEstimator.hpp"\n#include <aliceVision/alicevision_omp.hpp>\n#include <algorithm>\n', 1)
+        dme.write_text(t, encoding="utf-8", newline="\n")
 
     # 1e. block-height override for the occupancy-derived launch shape (CHESHIRE_BLOCK_Y)
     t = sv.read_text(encoding="utf-8")

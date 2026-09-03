@@ -1,0 +1,21 @@
+        // cheshire: prefetch this batch's images in parallel. Camera switches were dominated by
+        // sequential EXR reads (up to 3 s per R camera on 12 MP inputs); the image cache is
+        // thread-safe per camera and, with the slot lock, for concurrent different cameras.
+        {
+            std::vector<int> batchCams;
+            for (int i = firstTileIndex; i < lastTileIndex; ++i)
+            {
+                const Tile& tile = tiles.at(i);
+                batchCams.push_back(tile.rc);
+                for (const int tc : tile.sgmTCams) batchCams.push_back(tc);
+                if (_depthMapParams.useRefine)
+                    for (const int tc : tile.refineTCams) batchCams.push_back(tc);
+            }
+            std::sort(batchCams.begin(), batchCams.end());
+            batchCams.erase(std::unique(batchCams.begin(), batchCams.end()), batchCams.end());
+            const int nbPrefetch = static_cast<int>(batchCams.size());
+#pragma omp parallel for schedule(dynamic)
+            for (int k = 0; k < nbPrefetch; ++k)
+                ic.refreshImage_sync(batchCams[k]);
+        }
+

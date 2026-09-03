@@ -88,8 +88,33 @@ inline hipError_t cudaMalloc3D(hipPitchedPtr* p, hipExtent extent) { return ches
 #define cudaMemcpy3D hipMemcpy3D
 #define cudaMemcpy3DAsync hipMemcpy3DAsync
 #define cudaMemcpy3DParms hipMemcpy3DParms
-#define cudaMemcpyToSymbol hipMemcpyToSymbol
-#define cudaMemcpyToSymbolAsync hipMemcpyToSymbolAsync
+// cudaMemcpyToSymbol: hipMemcpyToSymbol resolves the symbol on every call (tens of ms each on
+// Windows: AliceVision spends ~70 ms per camera-parameter upload). Resolve the device address
+// once per symbol and use a plain copy.
+#include <unordered_map>
+#include <mutex>
+namespace cheshire { namespace detail {
+inline void* symbolDevicePtr(const void* symbol) {
+    static std::unordered_map<const void*, void*> cache; static std::mutex m;
+    std::lock_guard<std::mutex> g(m);
+    auto it = cache.find(symbol);
+    if (it != cache.end()) return it->second;
+    void* p = nullptr;
+    if (hipGetSymbolAddress(&p, symbol) != hipSuccess) return nullptr;
+    cache.emplace(symbol, p);
+    return p;
+}
+}}  // namespace cheshire::detail
+inline hipError_t cudaMemcpyToSymbol(const void* symbol, const void* src, size_t count, size_t offset = 0, hipMemcpyKind kind = hipMemcpyHostToDevice) {
+    void* dst = cheshire::detail::symbolDevicePtr(symbol);
+    if (!dst) return hipMemcpyToSymbol(symbol, src, count, offset, kind);
+    return hipMemcpy(static_cast<char*>(dst) + offset, src, count, kind);
+}
+inline hipError_t cudaMemcpyToSymbolAsync(const void* symbol, const void* src, size_t count, size_t offset, hipMemcpyKind kind, hipStream_t stream) {
+    void* dst = cheshire::detail::symbolDevicePtr(symbol);
+    if (!dst) return hipMemcpyToSymbolAsync(symbol, src, count, offset, kind, stream);
+    return hipMemcpyAsync(static_cast<char*>(dst) + offset, src, count, kind, stream);
+}
 #define cudaMemcpyFromSymbol hipMemcpyFromSymbol
 #define cudaMemcpyKind hipMemcpyKind
 #define cudaMemcpyHostToDevice hipMemcpyHostToDevice

@@ -123,6 +123,47 @@ index 25b80d4..84dba54 100644
      PRIVATE_LINKS
          aliceVision_gpu
          aliceVision_sfmData
+diff --git a/src/aliceVision/depthMap/DepthMapEstimator.cpp b/src/aliceVision/depthMap/DepthMapEstimator.cpp
+index 187e8f5..9c94992 100644
+--- a/src/aliceVision/depthMap/DepthMapEstimator.cpp
++++ b/src/aliceVision/depthMap/DepthMapEstimator.cpp
+@@ -5,6 +5,8 @@
+ // You can obtain one at https://mozilla.org/MPL/2.0/.
+ 
+ #include "DepthMapEstimator.hpp"
++#include <aliceVision/alicevision_omp.hpp>
++#include <algorithm>
+ 
+ #include <aliceVision/system/Logger.hpp>
+ #include <aliceVision/system/Timer.hpp>
+@@ -331,6 +333,27 @@ void DepthMapEstimator::compute(int cudaDeviceId, const std::vector<int>& cams)
+         const int firstTileIndex = b * nbTilesPerBatch;
+         const int lastTileIndex = std::min((b + 1) * nbTilesPerBatch, static_cast<int>(tiles.size()));
+ 
++        // cheshire: prefetch this batch's images in parallel. Camera switches were dominated by
++        // sequential EXR reads (up to 3 s per R camera on 12 MP inputs); the image cache is
++        // thread-safe per camera and, with the slot lock, for concurrent different cameras.
++        {
++            std::vector<int> batchCams;
++            for (int i = firstTileIndex; i < lastTileIndex; ++i)
++            {
++                const Tile& tile = tiles.at(i);
++                batchCams.push_back(tile.rc);
++                for (const int tc : tile.sgmTCams) batchCams.push_back(tc);
++                if (_depthMapParams.useRefine)
++                    for (const int tc : tile.refineTCams) batchCams.push_back(tc);
++            }
++            std::sort(batchCams.begin(), batchCams.end());
++            batchCams.erase(std::unique(batchCams.begin(), batchCams.end()), batchCams.end());
++            const int nbPrefetch = static_cast<int>(batchCams.size());
++#pragma omp parallel for schedule(dynamic)
++            for (int k = 0; k < nbPrefetch; ++k)
++                ic.refreshImage_sync(batchCams[k]);
++        }
++
+         // load tile R and corresponding T cameras in device cache
+         for (int i = firstTileIndex; i < lastTileIndex; ++i)
+         {
 diff --git a/src/aliceVision/depthMap/Refine.cpp b/src/aliceVision/depthMap/Refine.cpp
 index 64f1f95..6f3d608 100644
 --- a/src/aliceVision/depthMap/Refine.cpp
@@ -418,10 +459,10 @@ index 0000000..3bf804b
 +}}  // namespace cheshire::bridge
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
 new file mode 100644
-index 0000000..45d5919
+index 0000000..612e08f
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,215 @@
 +// Cheshire "conversion API": compile AliceVision's CUDA depth-map sources as HIP
 +// without rewriting them. Force-included (clang -include / clang-cl /FI) or pulled in
 +// through the cuda_runtime.h shim next to this file.
@@ -512,8 +553,33 @@ index 0000000..45d5919
 +#define cudaMemcpy3D hipMemcpy3D
 +#define cudaMemcpy3DAsync hipMemcpy3DAsync
 +#define cudaMemcpy3DParms hipMemcpy3DParms
-+#define cudaMemcpyToSymbol hipMemcpyToSymbol
-+#define cudaMemcpyToSymbolAsync hipMemcpyToSymbolAsync
++// cudaMemcpyToSymbol: hipMemcpyToSymbol resolves the symbol on every call (tens of ms each on
++// Windows: AliceVision spends ~70 ms per camera-parameter upload). Resolve the device address
++// once per symbol and use a plain copy.
++#include <unordered_map>
++#include <mutex>
++namespace cheshire { namespace detail {
++inline void* symbolDevicePtr(const void* symbol) {
++    static std::unordered_map<const void*, void*> cache; static std::mutex m;
++    std::lock_guard<std::mutex> g(m);
++    auto it = cache.find(symbol);
++    if (it != cache.end()) return it->second;
++    void* p = nullptr;
++    if (hipGetSymbolAddress(&p, symbol) != hipSuccess) return nullptr;
++    cache.emplace(symbol, p);
++    return p;
++}
++}}  // namespace cheshire::detail
++inline hipError_t cudaMemcpyToSymbol(const void* symbol, const void* src, size_t count, size_t offset = 0, hipMemcpyKind kind = hipMemcpyHostToDevice) {
++    void* dst = cheshire::detail::symbolDevicePtr(symbol);
++    if (!dst) return hipMemcpyToSymbol(symbol, src, count, offset, kind);
++    return hipMemcpy(static_cast<char*>(dst) + offset, src, count, kind);
++}
++inline hipError_t cudaMemcpyToSymbolAsync(const void* symbol, const void* src, size_t count, size_t offset, hipMemcpyKind kind, hipStream_t stream) {
++    void* dst = cheshire::detail::symbolDevicePtr(symbol);
++    if (!dst) return hipMemcpyToSymbolAsync(symbol, src, count, offset, kind, stream);
++    return hipMemcpyAsync(static_cast<char*>(dst) + offset, src, count, kind, stream);
++}
 +#define cudaMemcpyFromSymbol hipMemcpyFromSymbol
 +#define cudaMemcpyKind hipMemcpyKind
 +#define cudaMemcpyHostToDevice hipMemcpyHostToDevice
@@ -1059,6 +1125,66 @@ index e3b2880..b4e5c7b 100644
  inline std::ostream& operator<<(std::ostream& os, const Range& range)
  {
      os << range.begin << "-" << range.end;
+diff --git a/src/aliceVision/mvsUtils/ImagesCache.cpp b/src/aliceVision/mvsUtils/ImagesCache.cpp
+index c7e42f4..2e47e2d 100644
+--- a/src/aliceVision/mvsUtils/ImagesCache.cpp
++++ b/src/aliceVision/mvsUtils/ImagesCache.cpp
+@@ -89,22 +89,29 @@ void ImagesCache<Image>::setCacheSize(int nbPreload)
+ template<typename Image>
+ void ImagesCache<Image>::refreshData(int camId)
+ {
+-    // printf("camId %i\n",camId);
+-    // test if the image is in the memory
+-    if (_camIdMapId[camId] == -1)
++    // cheshire: slot bookkeeping under a global lock so several cameras can be loaded in
++    // parallel (DepthMapEstimator prefetches a batch); the file read itself stays outside.
++    int mapId = -1;
+     {
+-        // remove the oldest one
+-        int mapId = _mapIdClock.minValId();
+-        int oldCamId = _mapIdCamId[mapId];
+-        if (oldCamId >= 0)
+-            _camIdMapId[oldCamId] = -1;
+-        // TODO: oldCamId should be protected if already used
+-
+-        // replace with new new
+-        _camIdMapId[camId] = mapId;
+-        _mapIdCamId[mapId] = camId;
+-        _mapIdClock[mapId] = clock();
++        std::lock_guard<std::mutex> slotLock(_slotMutex);
++        if (_camIdMapId[camId] == -1)
++        {
++            // remove the oldest one
++            mapId = _mapIdClock.minValId();
++            int oldCamId = _mapIdCamId[mapId];
++            if (oldCamId >= 0)
++                _camIdMapId[oldCamId] = -1;
++            // TODO: oldCamId should be protected if already used
++
++            // replace with new new
++            _camIdMapId[camId] = mapId;
++            _mapIdCamId[mapId] = camId;
++            _mapIdClock[mapId] = clock();
++        }
++    }
+ 
++    if (mapId >= 0)
++    {
+         // reload data from files
+         long t1 = clock();
+         if (_imgs[mapId] == nullptr)
+diff --git a/src/aliceVision/mvsUtils/ImagesCache.hpp b/src/aliceVision/mvsUtils/ImagesCache.hpp
+index 8849153..05ac303 100644
+--- a/src/aliceVision/mvsUtils/ImagesCache.hpp
++++ b/src/aliceVision/mvsUtils/ImagesCache.hpp
+@@ -49,6 +49,7 @@ class ImagesCache
+     StaticVector<long> _mapIdClock;
+ 
+     std::vector<std::mutex> _imagesMutexes;
++    std::mutex _slotMutex;  // cheshire: slot bookkeeping, allows parallel loads of different cameras
+     std::vector<std::string> _imagesNames;
+ 
+     std::list<std::future<void>> _asyncObjects;
 diff --git a/src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp b/src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp
 index 1f23958..5491985 100644
 --- a/src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp

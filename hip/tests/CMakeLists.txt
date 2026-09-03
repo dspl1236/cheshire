@@ -32,3 +32,9 @@ target_link_libraries(texfmt_probe PRIVATE hip::device)
 
 add_executable(surf_probe surf_probe.hip)
 target_link_libraries(surf_probe PRIVATE hip::device)
+
+add_executable(alloc_bench alloc_bench.hip)
+target_link_libraries(alloc_bench PRIVATE hip::device)
+
+add_executable(alloc3d_bench alloc3d_bench.hip)
+target_link_libraries(alloc3d_bench PRIVATE hip::device)
