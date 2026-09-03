@@ -6,6 +6,7 @@
 #include <hip/hip_runtime.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 #include <chrono>
 
