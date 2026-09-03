@@ -9,7 +9,7 @@ if "%DS%"=="" set DS=monstree-mini6
 set R=%CHESHIRE_ROOT%
 set INST=%R%\build\av-gfx1201-install
 set REF=%R%\data\ref\%DS%
-set OUT=%R%\data\out\%DS%-hip
+set OUT=%R%\data\out\%DS%-hip-dbg
 for /d %%D in ("%REF%\StructureFromMotion\*") do set SFM=%%D\sfm.abc
 for /d %%D in ("%REF%\PrepareDenseScene\*") do set IMGS=%%D
 for /d %%D in ("%REF%\DepthMap\*") do set REFDM=%%D
@@ -32,6 +32,6 @@ echo [cheshire] out=%OUT%
   --refineEnabled True --refineScale 1 --refineStepXY 1 --refineMaxTCamsPerTile 4 --refineSubsampling 10 --refineHalfNbDepths 15 ^
   --refineWSH 3 --refineSigma 15.0 --refineGammaC 15.5 --refineGammaP 8.0 --refineInterpolateMiddleDepth False --refineUseConsistentScale False ^
   --colorOptimizationEnabled True --colorOptimizationNbIterations 100 --sgmUseCustomPatchPattern False --refineUseCustomPatchPattern False ^
-  --nbGPUs 0 --verboseLevel info --output "%OUT%" %CHESHIRE_DEPTHMAP_EXTRA% || exit /b 1
+  --nbGPUs 0 --verboseLevel trace --exportIntermediateDepthSimMaps True --exportIntermediateVolumes True --output "%OUT%" %CHESHIRE_DEPTHMAP_EXTRA% || exit /b 1
 
 "%R%\tools\venv-rocm\Scripts\python.exe" "%R%\scripts\compare_depthmaps.py" "%REFDM%" "%OUT%" --png "%OUT%\compare"

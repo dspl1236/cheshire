@@ -44,6 +44,7 @@ TRACKED = [
     "src/aliceVision/mvsData/ROI.hpp",
     "src/aliceVision/depthMap/BufPtr.hpp",
     "src/aliceVision/sfm/pipeline/expanding/DistanceWeighting.cpp",
+    "src/aliceVision/depthMap/cuda/host/memory.hpp",
 ]
 
 
@@ -68,6 +69,17 @@ def main() -> None:
               .replace("#if !defined(__NVCC__)\n", "#if !defined(__NVCC__) && !defined(__HIPCC__)\n")
         if t2 != t:
             p.write_text(t2, encoding="utf-8", newline="\n")
+
+    # 1a. HIP on Windows (ROCm 7.2.1, RX 9070) samples 16-bit float (half4) texture arrays as
+    #     zeros (hip/tests/half_tex.hip); float4 arrays work. Use AliceVision's float4 texture
+    #     path in HIP builds (2x camera-image VRAM, handled by the memory bridge).
+    mh = AV / "src/aliceVision/depthMap/cuda/host/memory.hpp"
+    t = mh.read_text(encoding="utf-8")
+    t2 = t.replace("#define ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF\n",
+                   "#if !defined(__HIP_PLATFORM_AMD__)  // cheshire: half4 textures read as 0 on HIP-Windows; use float4 there\n"
+                   "#define ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF\n#endif\n", 1)
+    if t2 != t:
+        mh.write_text(t2, encoding="utf-8", newline="\n")
 
     # 1b. clang (OpenMP) cannot capture a structured binding inside an omp region
     #     (DistanceWeighting.cpp: "capturing a structured binding is not yet supported in OpenMP")

@@ -28,3 +28,14 @@ compat header, plus the two-line header patch.
 2. Run `aliceVision_depthMapEstimation` on a real dataset; compare against the CUDA
    node's output on the same SfM.
 3. Memory bridge inside `DeviceCache` / `DeviceMipmapImage` (docs/02).
+
+## 2026-09-03 (later): full AliceVision build green, DepthMap validated against CUDA
+
+`scriptsuild-alicevision.cmd gfx1201 install` builds all of AliceVision (108 executables)
+with the HIP backend and installs to `build/av-gfx1201-install`. Extra fixes on the way
+(all in `scripts/apply_hip_patch.py` / `build-alicevision.cmd`): MSVC STL helper shim
+(`hip/compat/stlcompat`), `/arch:AVX2` instead of the OFA `/arch:SSE2`, Boost.WinAPI vs
+windows.h in the device pass (`BOOST_USE_WINDOWS_H`), an OpenMP structured-binding rewrite,
+`LEMON::lemon`, the constant-writing host files joining the unity TU (non-RDC shadows are
+TU-local on the host too), and **float4 instead of half4 camera textures** (HIP-Windows
+half texture bug). Validation: docs/04 (PASS on monstree-mini6, 21.2 s vs 31.9 s CUDA/1080 Ti).

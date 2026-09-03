@@ -20,3 +20,6 @@ target_link_libraries(membridge_probe PRIVATE hip::device)
 add_executable(bridge_test bridge_test.hip)
 target_include_directories(bridge_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../compat/include)
 target_link_libraries(bridge_test PRIVATE hip::device)
+
+add_executable(half_tex half_tex.hip)
+target_link_libraries(half_tex PRIVATE hip::device)

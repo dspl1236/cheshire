@@ -552,6 +552,20 @@ index 0000000..e7182a6
 +// Shim: CUDART_* constants are mapped onto hip_math_constants.h in cuda_to_hip.h.
 +#pragma once
 +#include <cheshire/cuda_to_hip.h>
+diff --git a/src/aliceVision/depthMap/cuda/host/memory.hpp b/src/aliceVision/depthMap/cuda/host/memory.hpp
+index 294259f..5557992 100644
+--- a/src/aliceVision/depthMap/cuda/host/memory.hpp
++++ b/src/aliceVision/depthMap/cuda/host/memory.hpp
+@@ -7,7 +7,9 @@
+ #pragma once
+ 
+ // #define ALICEVISION_DEPTHMAP_TEXTURE_USE_UCHAR
++#if !defined(__HIP_PLATFORM_AMD__)  // cheshire: half4 textures read as 0 on HIP-Windows; use float4 there
+ #define ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF
++#endif
+ #define ALICEVISION_DEPTHMAP_TEXTURE_USE_INTERPOLATION
+ 
+ #ifdef ALICEVISION_DEPTHMAP_TEXTURE_USE_HALF
 diff --git a/src/aliceVision/mvsData/ROI.hpp b/src/aliceVision/mvsData/ROI.hpp
 index e3b2880..b4e5c7b 100644
 --- a/src/aliceVision/mvsData/ROI.hpp
