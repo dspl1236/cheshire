@@ -96,3 +96,19 @@ Linux binaries need a native-Linux AMD machine for a run-through.
    (amd-smi / rocm-smi / nvidia-smi, whichever exists) and the UI's GPU tiles accordingly.
 4. Validate with `scripts/linux/run-depthmap.sh <bundle> <cache> <out> <reference DepthMap dir>`
    on a copied Meshroom cache (`data/ref/monstree-*` here), same procedure as docs/04.
+
+## RDNA2 / house-pc with an RX 6700 XT (prepared 2026-09-03)
+
+* Bundle rebuilt with `gfx1030` added (targets now gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201),
+  `build/cheshire-alicevision-hip-linux-x64-rocm7.2-39f0251-rdna2.tar.gz`, staged as the only
+  tarball in `house-pc:~/apps/cheshire/` together with `scripts/` (node-amd-setup.sh,
+  run-depthmap.sh, gpu-precheck.sh, compare_depthmaps.py) and a Python venv for the compare tool.
+* ROCm 7.2 user-space still ships gfx1030 code objects and the HSA runtime knows gfx1031; the
+  6700 XT runs the gfx1030 code with `HSA_OVERRIDE_GFX_VERSION=10.3.0` (set in `env.sh` by the
+  setup script). Mint 22.3's kernel has `amdgpu` for RDNA2; nothing from AMD's apt repo needed.
+* Known caveat: community reports of a SIGSEGV regression on gfx1031/1032 with ROCm >= 6.4.3,
+  unconfirmed on 7.2. Fallback if it shows up: rebuild the bundle against ROCm 6.4.
+* Procedure on the node after the card swap (1080 Ti out): `sudo bash scripts/node-amd-setup.sh setup`,
+  re-login, `scripts/node-amd-setup.sh check`, then `scripts/node-amd-setup.sh run monstree-mini6`
+  (compares against the CUDA DepthMap produced on the same machine). Meshroom 2023.3 cannot drive
+  these binaries; the test runs `aliceVision_depthMapEstimation` directly.
