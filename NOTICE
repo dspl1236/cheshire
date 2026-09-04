@@ -1,0 +1,17 @@
+Cheshire - Meshroom/AliceVision photogrammetry on AMD GPUs via HIP
+Copyright (c) 2026 dspl1236
+
+Licensed under the Mozilla Public License, v. 2.0 (see LICENSE).
+
+This repository builds on AliceVision (https://github.com/alicevision/AliceVision),
+Copyright (c) AliceVision contributors, licensed under the Mozilla Public License, v. 2.0.
+AliceVision is included unmodified as the git submodule third_party/aliceVision.
+The files under hip/port/ (fused SGM aggregation, mip-level builder, image prefetch and the
+generated patch set in patches/) are modifications of AliceVision source files and remain
+subject to the MPL-2.0 as required by that license.
+
+The compatibility layer, memory bridge, mipmap emulation, probes, scripts and documentation
+(hip/compat, hip/tests, scripts, docs) are original work licensed under the MPL-2.0.
+
+Not affiliated with or endorsed by AliceVision, Meshroom, AMD or NVIDIA. CUDA, HIP, ROCm,
+Radeon and GeForce are trademarks of their respective owners.
