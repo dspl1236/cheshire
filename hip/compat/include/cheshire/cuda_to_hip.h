@@ -146,7 +146,7 @@ inline hipError_t cudaMemcpyToSymbolAsync(const void* symbol, const void* src, s
 #define CHESHIRE_EMULATE_MIPMAP 1
 #endif
 #include <cheshire/mipmap_emu.h>
-#if defined(CHESHIRE_EMULATE_MIPMAP) && !defined(__HIP_DEVICE_COMPILE__)
+#if defined(CHESHIRE_EMULATE_MIPMAP)
 inline hipError_t cudaMallocMipmappedArray(hipMipmappedArray_t* p, const hipChannelFormatDesc* d, hipExtent e, unsigned int levels, unsigned int flags = 0)
 { return cheshire::mip::mallocMipmappedArray(p, d, e, levels, flags); }
 inline hipError_t cudaFreeMipmappedArray(hipMipmappedArray_t m) { return cheshire::mip::freeMipmappedArray(m); }
@@ -172,11 +172,9 @@ inline hipError_t cudaArrayGetInfo(hipChannelFormatDesc* d, hipExtent* e, unsign
 #define cudaTextureObject_t hipTextureObject_t
 #define cudaSurfaceObject_t hipSurfaceObject_t
 #if defined(CHESHIRE_EMULATE_MIPMAP)
-#if !defined(__HIP_DEVICE_COMPILE__)
 inline hipError_t cudaCreateTextureObject(hipTextureObject_t* t, const hipResourceDesc* r, const hipTextureDesc* d, const hipResourceViewDesc* v)
 { return cheshire::mip::createTextureObject(t, r, d, v); }
 inline hipError_t cudaDestroyTextureObject(hipTextureObject_t t) { return cheshire::mip::destroyTextureObject(t); }
-#endif
 // device side: level table lookup instead of a hardware mip fetch
 #define tex2DLod cheshire_tex2DLod
 #else

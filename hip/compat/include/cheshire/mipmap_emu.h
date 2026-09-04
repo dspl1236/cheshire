@@ -21,7 +21,6 @@ struct TexSet { hipTextureObject_t t[kMaxLevels]; int n; };
 
 }}  // namespace cheshire::mip
 
-#if defined(__HIP_DEVICE_COMPILE__) || defined(__HIPCC__)
 template<class T>
 __device__ inline T cheshire_tex2DLod(hipTextureObject_t handle, float u, float v, float level)
 {
@@ -30,9 +29,8 @@ __device__ inline T cheshire_tex2DLod(hipTextureObject_t handle, float u, float 
     l = l < 0 ? 0 : (l >= s->n ? s->n - 1 : l);
     return tex2D<T>(s->t[l], u, v);
 }
-#endif
 
-#if !defined(__HIP_DEVICE_COMPILE__)
+// host-side implementation (plain __host__ functions: parsed in both compilation passes)
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
@@ -141,4 +139,3 @@ inline hipError_t destroyTextureObject(hipTextureObject_t tex) {
 }
 
 }}  // namespace cheshire::mip
-#endif  // host side
