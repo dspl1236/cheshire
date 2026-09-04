@@ -132,7 +132,6 @@ inline hipError_t cudaMemcpyToSymbolAsync(const void* symbol, const void* src, s
 // ---- arrays / mipmaps -----------------------------------------------------
 #define cudaArray hipArray
 #define cudaArray_t hipArray_t
-#define cudaArrayGetInfo hipArrayGetInfo
 #define cudaMemcpy2DToArray hipMemcpy2DToArray
 #define cudaMemcpy2DFromArray hipMemcpy2DFromArray
 #define cudaMallocArray hipMallocArray
@@ -140,9 +139,25 @@ inline hipError_t cudaMemcpyToSymbolAsync(const void* symbol, const void* src, s
 #define cudaArrayDefault hipArrayDefault
 #define cudaArraySurfaceLoadStore hipArraySurfaceLoadStore
 #define cudaMipmappedArray_t hipMipmappedArray_t
+// Mipmapped arrays: emulated with one plain array + texture per level unless the platform's
+// native support is requested (CHESHIRE_NATIVE_MIPMAP). Linux ROCm 7.2 has no
+// hipMallocMipmappedArray on RDNA1 ("Mipmap not supported on one of the devices").
+#if !defined(CHESHIRE_NATIVE_MIPMAP)
+#define CHESHIRE_EMULATE_MIPMAP 1
+#endif
+#include <cheshire/mipmap_emu.h>
+#if defined(CHESHIRE_EMULATE_MIPMAP) && !defined(__HIP_DEVICE_COMPILE__)
+inline hipError_t cudaMallocMipmappedArray(hipMipmappedArray_t* p, const hipChannelFormatDesc* d, hipExtent e, unsigned int levels, unsigned int flags = 0)
+{ return cheshire::mip::mallocMipmappedArray(p, d, e, levels, flags); }
+inline hipError_t cudaFreeMipmappedArray(hipMipmappedArray_t m) { return cheshire::mip::freeMipmappedArray(m); }
+inline hipError_t cudaGetMipmappedArrayLevel(hipArray_t* a, hipMipmappedArray_t m, unsigned int level) { return cheshire::mip::getMipmappedArrayLevel(a, m, level); }
+inline hipError_t cudaArrayGetInfo(hipChannelFormatDesc* d, hipExtent* e, unsigned int* f, hipArray_t a) { return cheshire::mip::arrayGetInfo(d, e, f, a); }
+#else
 #define cudaMallocMipmappedArray hipMallocMipmappedArray
 #define cudaFreeMipmappedArray hipFreeMipmappedArray
 #define cudaGetMipmappedArrayLevel hipGetMipmappedArrayLevel
+#define cudaArrayGetInfo hipArrayGetInfo
+#endif
 #define cudaChannelFormatDesc hipChannelFormatDesc
 #define cudaCreateChannelDesc hipCreateChannelDesc
 #define cudaCreateChannelDescHalf hipCreateChannelDescHalf
@@ -156,8 +171,18 @@ inline hipError_t cudaMemcpyToSymbolAsync(const void* symbol, const void* src, s
 // ---- texture / surface objects -------------------------------------------
 #define cudaTextureObject_t hipTextureObject_t
 #define cudaSurfaceObject_t hipSurfaceObject_t
+#if defined(CHESHIRE_EMULATE_MIPMAP)
+#if !defined(__HIP_DEVICE_COMPILE__)
+inline hipError_t cudaCreateTextureObject(hipTextureObject_t* t, const hipResourceDesc* r, const hipTextureDesc* d, const hipResourceViewDesc* v)
+{ return cheshire::mip::createTextureObject(t, r, d, v); }
+inline hipError_t cudaDestroyTextureObject(hipTextureObject_t t) { return cheshire::mip::destroyTextureObject(t); }
+#endif
+// device side: level table lookup instead of a hardware mip fetch
+#define tex2DLod cheshire_tex2DLod
+#else
 #define cudaCreateTextureObject hipCreateTextureObject
 #define cudaDestroyTextureObject hipDestroyTextureObject
+#endif
 #define cudaCreateSurfaceObject hipCreateSurfaceObject
 #define cudaDestroySurfaceObject hipDestroySurfaceObject
 #define cudaResourceDesc hipResourceDesc

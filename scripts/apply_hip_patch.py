@@ -66,7 +66,7 @@ def main() -> None:
     for f in ["cuda_runtime.h", "cuda_fp16.h", "math_constants.h"]:
         shutil.copy2(ROOT / "hip" / "compat" / "include" / f, dst / f)
     (dst / "cheshire").mkdir(exist_ok=True)
-    for f in ["cuda_to_hip.h", "bridge.h"]:
+    for f in ["cuda_to_hip.h", "bridge.h", "mipmap_emu.h"]:
         shutil.copy2(ROOT / "hip" / "compat" / "include" / "cheshire" / f, dst / "cheshire" / f)
     shutil.copy2(ROOT / "hip" / "port" / "unity" / "depthmap_device_unity.hip", dst / "depthmap_device_unity.hip")
     # header overlay (2-line change) applied in place
