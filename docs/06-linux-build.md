@@ -112,3 +112,41 @@ Linux binaries need a native-Linux AMD machine for a run-through.
   re-login, `scripts/node-amd-setup.sh check`, then `scripts/node-amd-setup.sh run monstree-mini6`
   (compares against the CUDA DepthMap produced on the same machine). Meshroom 2023.3 cannot drive
   these binaries; the test runs `aliceVision_depthMapEstimation` directly.
+
+## First real Linux GPU: house-pc with a Radeon RX 5500 XT (RDNA1, gfx1012, 8 GB) — 2026-09-03
+
+What it took to get from "bundle on disk" to "HIP sees the card", each a real deployment lesson:
+
+1. **The WSL build box ships the WSL flavour of the HSA runtime.** `libhsa-runtime64.so.1`
+   from `amdgpu-install --usecase=wsl` probes `/dev/dxg` and `/dev/accel*` and never opens
+   `/dev/kfd`; on a real Linux box `hsa_init` fails with `HSA_STATUS_ERROR_OUT_OF_RESOURCES`
+   and the tools say "No CUDA-Enabled GPU". The bundle step now swaps in `hsa-rocr` from
+   AMD's apt repo automatically (`build-alicevision.sh`).
+2. **`libamd_comgr` must be in the bundle.** HIP `dlopen`s the code-object manager at runtime,
+   so `fixup_bundle` never sees it; without it every device fails with
+   "Failed to load COMGR library" / "Code object manager initialization failed". 160 MB, now
+   included (bundle tarball 116 MB compressed).
+3. **RDNA1 is fine with ROCm 7.2's runtime** once the two above are fixed: HIP enumerates the
+   RX 5500 XT natively as gfx1012 (compute capability 10.1); no `HSA_OVERRIDE_GFX_VERSION`
+   needed when the fat binary carries gfx1012 (targets are now
+   gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201). Presenting the card as
+   gfx1030 and running the RDNA2 code object crashes with
+   `HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION`; do not do that.
+4. **Mipmapped arrays are not supported on this Linux stack**
+   (`hipMallocMipmappedArray`: "Mipmap not supported on one of the devices"). Everything
+   else the depth map needs works on the card (plain float4/half4/uchar4 textures, pitch2D
+   textures, the memory bridge, 2.8 us launches). The compat layer now emulates mipmaps:
+   one plain array + texture per level and a device-side level table behind the 64-bit
+   handle; `tex2DLod` becomes a table lookup + `tex2D`. AliceVision only samples at integer
+   levels, and on the RX 9070 the emulated output is **bit-identical** to native mipmaps -
+   but it costs ~35 % on that card (23.5 s vs 17.4 s on mini6), so the Windows build keeps
+   native mipmaps (`-DCHESHIRE_NATIVE_MIPMAP`) and the Linux bundle emulates.
+5. The half-array `surf2Dwrite` defect reproduces on Linux/RDNA1 too: it is a HIP runtime
+   bug, not a Windows one. The buffer-copy mip builder covers both.
+6. Small ones: `getent`-based home under `sudo` in `node-amd-setup.sh`; git must carry the
+   executable bits (a `reset --hard` from the Windows checkout dropped them: exit 126).
+
+Node-side layout: `~/apps/cheshire/{bundle,scripts,venv,env.sh}`; `env.sh` sets
+`ALICEVISION_ROOT`, `LD_LIBRARY_PATH` and `PATH`. The node's static-IP profile is bound to
+the old NIC name (`enp3s0`); with the new card the NIC is `enp5s0` and the box is on DHCP
+(`house-pc.local`). Left untouched on purpose: the network is the user's infra.
