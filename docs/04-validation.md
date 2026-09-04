@@ -79,3 +79,11 @@ same-version CUDA reference (build this AliceVision tree with CUDA on a NVIDIA b
 CUDA backend of this exact tree on the node) - until then the numbers above are the honest
 statement: identical validity masks, zero median error, ~1-8 % of pixels per view differing
 by more than 1 %.
+
+### monstree-mini6 on house-pc, RX 5500 XT (Linux), 2026-09-03
+
+Same-machine CUDA reference (1080 Ti, 31.9 s) vs HIP on an RDNA1 card (60.7 s): masks
+identical on all views, median error 0, 96-98 % within 1 %. HIP-vs-HIP across GPUs
+(RX 5500 XT Linux vs RX 9070 Windows, identical build) shows the same spread, so ~2 % of
+pixels differing by >1 % is the cross-GPU noise floor. Details and panels:
+[docs/validation/monstree-mini6-rx5500xt-linux/index.md](validation/monstree-mini6-rx5500xt-linux/index.md).
