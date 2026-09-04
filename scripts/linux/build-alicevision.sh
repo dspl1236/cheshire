@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AV_DEV="$ROOT/third_party/aliceVision"
 STEP="${1:-install}"
-ARCHS="${2:-gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201}"
+ARCHS="${2:-gfx1010;gfx1012;gfx1030;gfx1031;gfx1032;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201}"
 ROCM="${ROCM_PATH:-/opt/rocm}"
 AV_DEPS="${AV_DEPS:-/opt/AliceVision_deps}"
 AV_BUILD="${AV_BUILD:-$HOME/av-hip-build}"
