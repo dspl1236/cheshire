@@ -187,7 +187,12 @@ inline hipError_t hostAlloc(void** devPtr, size_t bytes, Class cls, const char* 
     std::lock_guard<std::mutex> g(s.m);
     if (s.stats.hostBytes + bytes > s.hostCap) { s.stats.spillFailures++; return hipErrorOutOfMemory; }
     void* h = nullptr;
-    hipError_t e = hipHostMalloc(&h, bytes, hipHostMallocMapped);
+    // Non-coherent (coarse-grained, device-cached) on purpose: GPU atomics to fine-grained
+    // system memory are silently wrong on platforms without PCIe atomics (hip/tests/
+    // host_atomics.hip on an RX 6750 XT / Linux: atomicMin wrong on every element, atomicAdd
+    // fine, both correct on non-coherent memory; the fused SGM aggregation atomicMins into a
+    // spilled map). The CPU only touches spilled blocks through hipMemcpy after a sync.
+    hipError_t e = hipHostMalloc(&h, bytes, hipHostMallocMapped | hipHostMallocNonCoherent);
     if (e != hipSuccess) { s.stats.spillFailures++; return e; }
     void* d = nullptr;
     e = hipHostGetDevicePointer(&d, h, 0);

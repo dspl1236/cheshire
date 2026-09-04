@@ -41,3 +41,6 @@ target_link_libraries(alloc3d_bench PRIVATE hip::device)
 
 add_executable(linear_tex linear_tex.hip)
 target_link_libraries(linear_tex PRIVATE hip::device)
+
+add_executable(host_atomics host_atomics.hip)
+target_link_libraries(host_atomics PRIVATE hip::device)

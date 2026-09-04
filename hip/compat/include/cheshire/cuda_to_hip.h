@@ -77,10 +77,13 @@ template<class T>
 inline hipError_t cudaMallocPitch(T** devPtr, size_t* pitch, size_t width, size_t height)
 { return cheshire::bridge::mallocPitch(reinterpret_cast<void**>(devPtr), pitch, width, height); }
 inline hipError_t cudaMalloc3D(hipPitchedPtr* p, hipExtent extent) { return cheshire::bridge::malloc3D(p, extent); }
-#define cudaMemset hipMemset
-#define cudaMemsetAsync hipMemsetAsync
-#define cudaMemset2D hipMemset2D
-#define cudaMemset2DAsync hipMemset2DAsync
+// memsets: same ordering rule as the copies below (the fused SGM aggregation clears a per-row
+// accumulator with cudaMemsetAsync between kernels; spilled on ROCm-Linux that clear ran out of
+// order and corrupted every depth map)
+inline hipError_t cudaMemset(void* p, int v, size_t n);
+inline hipError_t cudaMemsetAsync(void* p, int v, size_t n, hipStream_t s = 0);
+inline hipError_t cudaMemset2D(void* p, size_t pitch, int v, size_t w, size_t h);
+inline hipError_t cudaMemset2DAsync(void* p, size_t pitch, int v, size_t w, size_t h, hipStream_t s = 0);
 // Copies that touch a spilled (mapped host) block are ordered by hand. On ROCm-Linux a copy
 // whose source or destination is host-resident is executed by the CPU at the call, not queued
 // behind the stream's kernels; AliceVision reads its finished tile maps exactly that way
@@ -96,6 +99,14 @@ inline void orderCopy(const void* a, const void* b) {
     if (cheshire::bridge::inSpilled(a) || cheshire::bridge::inSpilled(b)) (void)hipDeviceSynchronize();
 }
 }}  // namespace cheshire::detail
+inline hipError_t cudaMemset(void* p, int v, size_t n)
+{ cheshire::detail::orderCopy(p, nullptr); return hipMemset(p, v, n); }
+inline hipError_t cudaMemsetAsync(void* p, int v, size_t n, hipStream_t s)
+{ cheshire::detail::orderCopy(p, nullptr, s); return hipMemsetAsync(p, v, n, s); }
+inline hipError_t cudaMemset2D(void* p, size_t pitch, int v, size_t w, size_t h)
+{ cheshire::detail::orderCopy(p, nullptr); return hipMemset2D(p, pitch, v, w, h); }
+inline hipError_t cudaMemset2DAsync(void* p, size_t pitch, int v, size_t w, size_t h, hipStream_t s)
+{ cheshire::detail::orderCopy(p, nullptr, s); return hipMemset2DAsync(p, pitch, v, w, h, s); }
 inline hipError_t cudaMemcpy(void* dst, const void* src, size_t n, hipMemcpyKind k)
 { cheshire::detail::orderCopy(dst, src); return hipMemcpy(dst, src, n, k); }
 inline hipError_t cudaMemcpyAsync(void* dst, const void* src, size_t n, hipMemcpyKind k, hipStream_t s = 0)

@@ -226,7 +226,7 @@ box so the default host budget is 3.6 GB):
 | linear levels, everything in VRAM | 31.6 s | 1.0x | yes |
 | planner off | 31.3 s | 1.0x | yes |
 | maps in host RAM (879 MB) | 58.1 s | 1.9x | **no** (first run) |
-| similarity volumes in host RAM | failed: 6 GB does not fit the 3.6 GB default host budget | | |
+| similarity volumes in host RAM (6.0 GB, `CHESHIRE_BRIDGE_HOST_MB=7000`) | 264 s | 8.5x | yes |
 | camera images in host RAM (186 MB) | 2529 s | 81x | yes |
 | 4 GB / 1.5 GB VRAM cap, v2 planner | 30.9 s / 30.5 s (8 / 2 tiles) | 1.0x | yes |
 | 700 MB cap (one tile, 29 MB of maps spill) | 30.6 s | 1.0x | **no** (first run) |
@@ -235,11 +235,25 @@ box so the default host budget is 3.6 GB):
 Two things this says. First, PCIe 3.0 makes the image case 81x instead of 22x: the policy of
 never letting images leave VRAM is not a tuning choice, it is the difference between a slow
 run and an unusable one. Second, every Linux run in which a *map* lived in host memory
-produced wrong depth maps (95 % of pixels off), while the same cases were bit-identical on
-Windows. The cause is in the copy path: AliceVision reads a finished tile map with
-`cudaMemcpy2DAsync` on the tile's stream and a `cudaDeviceSynchronize` afterwards; when the
-source is mapped host memory, ROCm executes that copy on the CPU at the call instead of queuing
-it behind the stream's kernels, so the host sees the map before the kernels wrote it. PAL on
-Windows orders it. The compat layer now stream-orders any copy whose source or destination is
-inside a spilled block (`cheshire::bridge::inSpilled`, a range lookup, and a
-`hipStreamSynchronize` before the copy), which costs a sync only in the degraded mode.
+produced wrong depth maps (median depth error 17-29 %, extra "valid" pixels), while the same
+cases were bit-identical on Windows, and volumes or images in host memory were fine on both.
+
+The first two suspects were ordering: ROCm may execute a copy or memset whose pointer is
+host-resident on the CPU at the call instead of behind the stream's kernels, so the compat
+layer now stream-orders any copy or memset that touches a spilled block
+(`cheshire::bridge::inSpilled`, a range lookup). Correct in principle, no effect on this bug.
+The actual cause is **GPU atomics on fine-grained host memory**. `hip/tests/host_atomics.hip`
+on the RX 6750 XT under Linux:
+
+| memory | `atomicMin` | `atomicAdd` | store / memset ordering |
+|---|---|---|---|
+| VRAM | ok | ok | ok |
+| mapped host, default (fine-grained, coherent) | **wrong on every element** | ok | ok |
+| mapped host, `hipHostMallocNonCoherent` (coarse-grained) | ok | ok | ok |
+
+(All four placements pass on the RX 9070 under Windows.) The fused SGM aggregation
+`atomicMin`s into a per-row accumulator, a Map-class buffer, and atomic min is not among the
+operations PCIe carries as atomics, so on fine-grained system memory it is silently lost.
+The bridge now allocates its host tier `hipHostMallocMapped | hipHostMallocNonCoherent`: the
+device caches it, atomics resolve in L2, and the CPU only ever reads spilled blocks through
+`hipMemcpy` after a synchronisation, which is where coarse-grained memory becomes visible.

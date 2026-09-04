@@ -351,10 +351,10 @@ index 0564791..d2e3efc 100644
  
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/bridge.h b/src/aliceVision/depthMap/cuda/hip/cheshire/bridge.h
 new file mode 100644
-index 0000000..ad8798b
+index 0000000..9a0976d
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/bridge.h
-@@ -0,0 +1,350 @@
+@@ -0,0 +1,355 @@
 +// Cheshire memory bridge v2: VRAM first, mapped system RAM when VRAM is short, and the
 +// choice of *what* spills made by buffer class instead of by arrival order.
 +//
@@ -544,7 +544,12 @@ index 0000000..ad8798b
 +    std::lock_guard<std::mutex> g(s.m);
 +    if (s.stats.hostBytes + bytes > s.hostCap) { s.stats.spillFailures++; return hipErrorOutOfMemory; }
 +    void* h = nullptr;
-+    hipError_t e = hipHostMalloc(&h, bytes, hipHostMallocMapped);
++    // Non-coherent (coarse-grained, device-cached) on purpose: GPU atomics to fine-grained
++    // system memory are silently wrong on platforms without PCIe atomics (hip/tests/
++    // host_atomics.hip on an RX 6750 XT / Linux: atomicMin wrong on every element, atomicAdd
++    // fine, both correct on non-coherent memory; the fused SGM aggregation atomicMins into a
++    // spilled map). The CPU only touches spilled blocks through hipMemcpy after a sync.
++    hipError_t e = hipHostMalloc(&h, bytes, hipHostMallocMapped | hipHostMallocNonCoherent);
 +    if (e != hipSuccess) { s.stats.spillFailures++; return e; }
 +    void* d = nullptr;
 +    e = hipHostGetDevicePointer(&d, h, 0);
@@ -707,10 +712,10 @@ index 0000000..ad8798b
 +}}  // namespace cheshire::bridge
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
 new file mode 100644
-index 0000000..ab83488
+index 0000000..ee7224e
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,272 @@
 +// Cheshire "conversion API": compile AliceVision's CUDA depth-map sources as HIP
 +// without rewriting them. Force-included (clang -include / clang-cl /FI) or pulled in
 +// through the cuda_runtime.h shim next to this file.
@@ -790,10 +795,13 @@ index 0000000..ab83488
 +inline hipError_t cudaMallocPitch(T** devPtr, size_t* pitch, size_t width, size_t height)
 +{ return cheshire::bridge::mallocPitch(reinterpret_cast<void**>(devPtr), pitch, width, height); }
 +inline hipError_t cudaMalloc3D(hipPitchedPtr* p, hipExtent extent) { return cheshire::bridge::malloc3D(p, extent); }
-+#define cudaMemset hipMemset
-+#define cudaMemsetAsync hipMemsetAsync
-+#define cudaMemset2D hipMemset2D
-+#define cudaMemset2DAsync hipMemset2DAsync
++// memsets: same ordering rule as the copies below (the fused SGM aggregation clears a per-row
++// accumulator with cudaMemsetAsync between kernels; spilled on ROCm-Linux that clear ran out of
++// order and corrupted every depth map)
++inline hipError_t cudaMemset(void* p, int v, size_t n);
++inline hipError_t cudaMemsetAsync(void* p, int v, size_t n, hipStream_t s = 0);
++inline hipError_t cudaMemset2D(void* p, size_t pitch, int v, size_t w, size_t h);
++inline hipError_t cudaMemset2DAsync(void* p, size_t pitch, int v, size_t w, size_t h, hipStream_t s = 0);
 +// Copies that touch a spilled (mapped host) block are ordered by hand. On ROCm-Linux a copy
 +// whose source or destination is host-resident is executed by the CPU at the call, not queued
 +// behind the stream's kernels; AliceVision reads its finished tile maps exactly that way
@@ -809,6 +817,14 @@ index 0000000..ab83488
 +    if (cheshire::bridge::inSpilled(a) || cheshire::bridge::inSpilled(b)) (void)hipDeviceSynchronize();
 +}
 +}}  // namespace cheshire::detail
++inline hipError_t cudaMemset(void* p, int v, size_t n)
++{ cheshire::detail::orderCopy(p, nullptr); return hipMemset(p, v, n); }
++inline hipError_t cudaMemsetAsync(void* p, int v, size_t n, hipStream_t s)
++{ cheshire::detail::orderCopy(p, nullptr, s); return hipMemsetAsync(p, v, n, s); }
++inline hipError_t cudaMemset2D(void* p, size_t pitch, int v, size_t w, size_t h)
++{ cheshire::detail::orderCopy(p, nullptr); return hipMemset2D(p, pitch, v, w, h); }
++inline hipError_t cudaMemset2DAsync(void* p, size_t pitch, int v, size_t w, size_t h, hipStream_t s)
++{ cheshire::detail::orderCopy(p, nullptr, s); return hipMemset2DAsync(p, pitch, v, w, h, s); }
 +inline hipError_t cudaMemcpy(void* dst, const void* src, size_t n, hipMemcpyKind k)
 +{ cheshire::detail::orderCopy(dst, src); return hipMemcpy(dst, src, n, k); }
 +inline hipError_t cudaMemcpyAsync(void* dst, const void* src, size_t n, hipMemcpyKind k, hipStream_t s = 0)
