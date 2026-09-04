@@ -63,3 +63,13 @@ hipHostMalloc(mapped)+device ptr: OK
 ```
 
 Conclusion: nothing in AliceVision's `depthMap/cuda` needs a feature HIP-on-Windows lacks.
+
+## Shipping a self-contained zip
+`scripts/package_windows.py` copies the install tree and walks the import tables
+(`llvm-objdump -p`) of every exe/dll to pull the transitive closure of vcpkg and ROCm
+runtime DLLs into `bin/` (93 DLLs for the gfx1201 build). One DLL is *not* in any import
+table: `amd_comgr0702.dll`. `amdhip64_7.dll` loads it with `LoadLibrary` when it first
+needs a code object; without it `hipGetDeviceCount` returns 0 and AliceVision reports
+"No CUDA-Enabled GPU" with no other diagnostic. The packager copies it explicitly (the
+Linux bundle has the same rule for `libamd_comgr.so`). Verified by running the packaged
+`aliceVision_depthMapEstimation` on the 6-view set with `PATH` reduced to `System32`.

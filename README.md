@@ -56,9 +56,30 @@ Forcing it on a real job (1.5 GB VRAM cap, 5.4 GB spilled): output **bit-identic
 * **ROCm for Windows installs as pip wheels**, no admin installer. CMake refuses to mix
   `cl.exe` with clang for HIP: use `clang-cl` for both. `-fgpu-rdc` is broken on Windows, so
   the device code is compiled as one unity translation unit.
-* **A relocatable Linux bundle needs two things `fixup_bundle` never sees**: the KFD flavour of
-  `libhsa-runtime64` (a WSL build box ships the `/dev/dxg` one) and `libamd_comgr` (HIP
-  `dlopen`s it). With those in place RDNA1 works natively on ROCm 7.2.
+* **A relocatable bundle needs things the dependency walkers never see**: HIP loads the
+  code-object manager (`libamd_comgr` / `amd_comgr0702.dll`) at runtime on both OSes, and
+  without it the GPU simply "does not exist". On Linux a WSL build box also ships the
+  `/dev/dxg` flavour of `libhsa-runtime64`, which must be swapped for the KFD one. With those
+  in place RDNA1 works natively on ROCm 7.2.
+
+## Downloads
+
+Everything needed to run or reproduce is attached to the
+[v0.1.0 release](https://github.com/dspl1236/cheshire/releases/tag/v0.1.0):
+
+| asset | size | contents |
+|---|---|---|
+| `cheshire-alicevision-hip-windows-x64-rocm7.2.1-gfx1201.zip` | 100 MB | self-contained AliceVision + HIP DepthMap for RDNA4 on Windows; unzip, needs only the Adrenalin driver |
+| `cheshire-alicevision-hip-linux-x64-rocm7.2.tar.gz` | 116 MB | relocatable Linux bundle, code objects for RDNA1-RDNA4; needs only `amdgpu` + `/dev/kfd` |
+| `monstree-mini6-meshroom-cache.tar.gz` | 383 MB | 6-view Meshroom 2023.3 cache: CameraInit, SfM, PrepareDenseScene and the CUDA DepthMap reference |
+| `monstree-full-cuda-reference.tar.gz` | 680 MB | 41-view SfM + CUDA DepthMap reference (GTX 1080 Ti) |
+| `cheshire-hip-depthmap-outputs.tar.gz` | 966 MB | the HIP depth maps behind the table above (RX 9070 6 + 41 views, RX 5500 XT, RX 6750 XT) |
+
+Reproduce a row: unpack a cache under `data/ref/<dataset>/`, then `scriptsun-depthmap.cmd <dataset>`
+(Windows, set `CHESHIRE_INSTALL` to the unzipped folder) or `scripts/linux/run-depthmap.sh` (Linux).
+Both run the exact Meshroom 2023.3 DepthMap command line and finish with `scripts/compare_depthmaps.py`,
+which prints the per-view table and writes the side-by-side panels. Photos are
+[alicevision/dataset_monstree](https://github.com/alicevision/dataset_monstree).
 
 ## Layout
 
@@ -86,3 +107,6 @@ Works end to end on RDNA1, RDNA2 and RDNA4; RDNA3 has its code object in every b
 hardware run yet. Next: bridge v2 (keep similarity volumes in VRAM, spill camera images first,
 make the planner aware), a same-version CUDA reference, RDNA3 hardware, and a Meshroom
 release paired with the bundle on a production node.
+
+Primary repository: [git.hausofdub.com/dspl1236/cheshire](https://git.hausofdub.com/dspl1236/cheshire);
+mirror: [github.com/dspl1236/cheshire](https://github.com/dspl1236/cheshire). Licensed MPL-2.0.
