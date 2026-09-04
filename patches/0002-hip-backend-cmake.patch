@@ -459,10 +459,10 @@ index 0000000..3bf804b
 +}}  // namespace cheshire::bridge
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
 new file mode 100644
-index 0000000..31685f2
+index 0000000..85e137a
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,238 @@
 +// Cheshire "conversion API": compile AliceVision's CUDA depth-map sources as HIP
 +// without rewriting them. Force-included (clang -include / clang-cl /FI) or pulled in
 +// through the cuda_runtime.h shim next to this file.
@@ -611,7 +611,7 @@ index 0000000..31685f2
 +#define CHESHIRE_EMULATE_MIPMAP 1
 +#endif
 +#include <cheshire/mipmap_emu.h>
-+#if defined(CHESHIRE_EMULATE_MIPMAP) && !defined(__HIP_DEVICE_COMPILE__)
++#if defined(CHESHIRE_EMULATE_MIPMAP)
 +inline hipError_t cudaMallocMipmappedArray(hipMipmappedArray_t* p, const hipChannelFormatDesc* d, hipExtent e, unsigned int levels, unsigned int flags = 0)
 +{ return cheshire::mip::mallocMipmappedArray(p, d, e, levels, flags); }
 +inline hipError_t cudaFreeMipmappedArray(hipMipmappedArray_t m) { return cheshire::mip::freeMipmappedArray(m); }
@@ -637,11 +637,9 @@ index 0000000..31685f2
 +#define cudaTextureObject_t hipTextureObject_t
 +#define cudaSurfaceObject_t hipSurfaceObject_t
 +#if defined(CHESHIRE_EMULATE_MIPMAP)
-+#if !defined(__HIP_DEVICE_COMPILE__)
 +inline hipError_t cudaCreateTextureObject(hipTextureObject_t* t, const hipResourceDesc* r, const hipTextureDesc* d, const hipResourceViewDesc* v)
 +{ return cheshire::mip::createTextureObject(t, r, d, v); }
 +inline hipError_t cudaDestroyTextureObject(hipTextureObject_t t) { return cheshire::mip::destroyTextureObject(t); }
-+#endif
 +// device side: level table lookup instead of a hardware mip fetch
 +#define tex2DLod cheshire_tex2DLod
 +#else
@@ -705,10 +703,10 @@ index 0000000..31685f2
 +// tex2D<T>, tex2DLod<T>, surf2Dwrite, atomicAdd ...
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/mipmap_emu.h b/src/aliceVision/depthMap/cuda/hip/cheshire/mipmap_emu.h
 new file mode 100644
-index 0000000..0741b11
+index 0000000..c49ec92
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/mipmap_emu.h
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,141 @@
 +// Cheshire: mipmapped-array emulation for HIP stacks without hipMallocMipmappedArray
 +// (Linux ROCm 7.2 reports "Mipmap not supported on one of the devices", e.g. RX 5500 XT).
 +//
@@ -732,7 +730,6 @@ index 0000000..0741b11
 +
 +}}  // namespace cheshire::mip
 +
-+#if defined(__HIP_DEVICE_COMPILE__) || defined(__HIPCC__)
 +template<class T>
 +__device__ inline T cheshire_tex2DLod(hipTextureObject_t handle, float u, float v, float level)
 +{
@@ -741,9 +738,8 @@ index 0000000..0741b11
 +    l = l < 0 ? 0 : (l >= s->n ? s->n - 1 : l);
 +    return tex2D<T>(s->t[l], u, v);
 +}
-+#endif
 +
-+#if !defined(__HIP_DEVICE_COMPILE__)
++// host-side implementation (plain __host__ functions: parsed in both compilation passes)
 +#include <cstring>
 +#include <mutex>
 +#include <unordered_map>
@@ -852,7 +848,6 @@ index 0000000..0741b11
 +}
 +
 +}}  // namespace cheshire::mip
-+#endif  // host side
 diff --git a/src/aliceVision/depthMap/cuda/hip/cuda_fp16.h b/src/aliceVision/depthMap/cuda/hip/cuda_fp16.h
 new file mode 100644
 index 0000000..06d2a95
