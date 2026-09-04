@@ -97,6 +97,25 @@ Linux binaries need a native-Linux AMD machine for a run-through.
 4. Validate with `scripts/linux/run-depthmap.sh <bundle> <cache> <out> <reference DepthMap dir>`
    on a copied Meshroom cache (`data/ref/monstree-*` here), same procedure as docs/04.
 
+## Pairing a Meshroom bundle with the HIP DepthMap (2026-09-04)
+
+Meshroom runs every node as an `aliceVision_*` executable from `<Meshroom>/aliceVision/bin`,
+and only `DepthMap` needs the GPU. So a production node keeps its Meshroom 2023.3 tarball
+and swaps one file: `scripts/linux/meshroom-pair.sh ~/apps/Meshroom-2023.3.0` renames the
+bundle's `aliceVision_depthMapEstimation` to `.cuda` and writes a wrapper in its place that
+execs `~/apps/cheshire/bundle/bin/aliceVision_depthMapEstimation` with the Cheshire bundle's
+`lib/` in front of `LD_LIBRARY_PATH` (so the HIP build resolves its own OpenImageIO / Boost /
+ROCm sonames, not the 2023 ones) and sources `~/apps/cheshire/env.sh` for per-node knobs
+(`HSA_OVERRIDE_GFX_VERSION`, `CHESHIRE_BRIDGE_*`). `--unpair` restores the CUDA binary.
+`node-amd-setup.sh pair` does the same from the node script.
+
+Meshroom 2023.3's DepthMap command line is accepted unchanged by the newer AliceVision the
+HIP build is based on (that is exactly the command line docs/04 validates with). Feature
+extraction must stay on the CPU (`FeatureExtraction:forceCpuExtraction=True`): PopSift is
+CUDA-only. Done on house-pc for the haus-infrastructure photogrammetry service, whose
+`reconstruct` wrapper now detects the vendor (`nvidia-smi` vs `/dev/kfd` + `amdgpu`) and
+whose dashboard reads load / VRAM / temperature from the `amdgpu` sysfs tree.
+
 ## RDNA2 / house-pc with an RX 6700 XT (prepared 2026-09-03)
 
 * Bundle rebuilt with `gfx1030` added (targets now gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201),

@@ -124,7 +124,7 @@ index 25b80d4..84dba54 100644
          aliceVision_gpu
          aliceVision_sfmData
 diff --git a/src/aliceVision/depthMap/DepthMapEstimator.cpp b/src/aliceVision/depthMap/DepthMapEstimator.cpp
-index 187e8f5..9c94992 100644
+index 187e8f5..83c8c87 100644
 --- a/src/aliceVision/depthMap/DepthMapEstimator.cpp
 +++ b/src/aliceVision/depthMap/DepthMapEstimator.cpp
 @@ -5,6 +5,8 @@
@@ -136,7 +136,84 @@ index 187e8f5..9c94992 100644
  
  #include <aliceVision/system/Logger.hpp>
  #include <aliceVision/system/Timer.hpp>
-@@ -331,6 +333,27 @@ void DepthMapEstimator::compute(int cudaDeviceId, const std::vector<int>& cams)
+@@ -109,6 +111,68 @@ int DepthMapEstimator::getNbSimultaneousTiles() const
+     const double rcMinCostMB = rcCamsCostMB + tileCostMB;
+     const double rcMaxCostMB = rcCamsCostMB + nbTilesPerCamera * tileCostMB;
+ 
++#ifdef CHESHIRE_HIP
++    // cheshire memory bridge v2 (hip/compat/include/cheshire/bridge.h). Measured on the RX 9070
++    // (docs/02-memory-bridge.md): camera images behind PCIe cost 13x, maps 1.9x, volumes 5.6x;
++    // tile parallelism costs nothing to give up. So: images stay in VRAM (reserve), tile
++    // parallelism is sized from the bridge's VRAM budget, and only when a single tile plus its
++    // images does not fit do volumes/maps spill.
++    //   CHESHIRE_BRIDGE_PLANNER=0  upstream heuristic (hipMemGetInfo * 0.8 for everything)
++    //   CHESHIRE_BRIDGE_PLANNER=1  upstream formula on the bridge VRAM budget, never below one tile (default)
++    //   CHESHIRE_BRIDGE_PLANNER=2  experiment: tile buffers get all the VRAM, camera images go to host
++    double deviceMemoryMB = 0.0;
++    int nbSimultaneousFullRc = 0;
++    int nbRemainingTiles = 0;
++    {
++        const cheshire::bridge::Budget budget = cheshire::bridge::budget();
++        const double toMB = 1.0 / (1024.0 * 1024.0);
++        const double vramMB = double(budget.vramCap > budget.vramUsed ? budget.vramCap - budget.vramUsed : 0) * toMB * 0.8;  // margin as upstream
++        const double hostMB = double(budget.hostCap > budget.hostUsed ? budget.hostCap - budget.hostUsed : 0) * toMB;
++        const double tilesCostMB = nbTilesPerCamera * tileCostMB;
++
++        double availableMB = vramMB;
++        if (budget.planner == 0)
++        {
++            double usedMB, totalMB;
++            getDeviceMemoryInfo(availableMB, usedMB, totalMB);
++            availableMB *= 0.8;
++        }
++        nbSimultaneousFullRc = static_cast<int>(availableMB / rcMaxCostMB);
++        nbRemainingTiles = static_cast<int>(std::max(0.0, (availableMB - nbSimultaneousFullRc * rcMaxCostMB) - rcCamsCostMB) / tileCostMB);
++        deviceMemoryMB = availableMB;
++
++        if (budget.planner == 2 && budget.imagesMaySpill && hostMB > 0.0)
++        {
++            // tiles from VRAM alone, images from VRAM + host
++            const int fullRcVram = nbSimultaneousFullRc, remVramTiles = nbRemainingTiles;
++            nbSimultaneousFullRc = static_cast<int>(std::min(vramMB / tilesCostMB, (vramMB + hostMB) / rcMaxCostMB));
++            const double remVramMB = vramMB - nbSimultaneousFullRc * tilesCostMB;
++            const double remTotalMB = (vramMB + hostMB) - nbSimultaneousFullRc * rcMaxCostMB;
++            nbRemainingTiles = static_cast<int>(std::max(0.0, std::min(remVramMB, remTotalMB - rcCamsCostMB)) / tileCostMB);
++            deviceMemoryMB = vramMB + hostMB;
++            ALICEVISION_LOG_INFO("Cheshire bridge planner 2: VRAM budget " << vramMB << " MB + host budget " << hostMB
++                                 << " MB for camera images (VRAM alone: " << fullRcVram << " full R cameras + " << remVramTiles << " tiles)");
++        }
++        else if (budget.planner != 0)
++        {
++            if (nbSimultaneousFullRc < 1 && nbRemainingTiles < 1)
++            {
++                // not even one tile with its images: run one tile and let the bridge spill its
++                // volumes / maps (images keep their reserve) instead of refusing the job
++                nbRemainingTiles = 1;
++                ALICEVISION_LOG_WARNING("Cheshire bridge planner 1: VRAM budget " << vramMB << " MB is below one tile ("
++                                        << rcMinCostMB << " MB); running one tile with volumes/maps spilling to system RAM");
++            }
++            else
++                ALICEVISION_LOG_INFO("Cheshire bridge planner 1: VRAM budget " << vramMB << " MB, " << nbSimultaneousFullRc
++                                     << " full R cameras + " << nbRemainingTiles << " tiles, images resident");
++        }
++        // keep VRAM for the camera images of every simultaneous R camera: they are allocated after
++        // the tile buffers, and the bridge makes volumes/maps respect this reserve
++        const int nbRc = nbSimultaneousFullRc + ((nbRemainingTiles > 0) ? 1 : 0);
++        cheshire::bridge::setReserve(size_t(std::max(0.0, nbRc * rcCamsCostMB) / toMB));
++    }
++#else
+     // available device memory
+     double deviceMemoryMB;
+     {
+@@ -126,6 +190,7 @@ int DepthMapEstimator::getNbSimultaneousTiles() const
+         const double remainingMemoryMB = deviceMemoryMB - (nbSimultaneousFullRc * rcMaxCostMB);
+         nbRemainingTiles = static_cast<int>(std::max(0.0, remainingMemoryMB - rcCamsCostMB) / tileCostMB);
+     }
++#endif
+ 
+     // check that we do not need more constant camera parameters than the ones in device constant memory
+     if (ALICEVISION_DEVICE_MAX_CONSTANT_CAMERA_PARAM_SETS < ((nbSimultaneousFullRc + ((nbRemainingTiles > 0) ? 1 : 0)) * rcCamParams))
+@@ -331,6 +396,27 @@ void DepthMapEstimator::compute(int cudaDeviceId, const std::vector<int>& cams)
          const int firstTileIndex = b * nbTilesPerBatch;
          const int lastTileIndex = std::min((b + 1) * nbTilesPerBatch, static_cast<int>(tiles.size()));
  
@@ -274,36 +351,55 @@ index 0564791..d2e3efc 100644
  
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/bridge.h b/src/aliceVision/depthMap/cuda/hip/cheshire/bridge.h
 new file mode 100644
-index 0000000..3bf804b
+index 0000000..998e442
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/bridge.h
-@@ -0,0 +1,179 @@
-+// Cheshire memory bridge: VRAM first, mapped system RAM when VRAM is short.
+@@ -0,0 +1,334 @@
++// Cheshire memory bridge v2: VRAM first, mapped system RAM when VRAM is short, and the
++// choice of *what* spills made by buffer class instead of by arrival order.
 +//
 +// Header-only, HIP-only. Wired in through cuda_to_hip.h so AliceVision's memory.hpp
 +// (cudaMalloc / cudaMallocPitch / cudaMalloc3D / cudaFree) uses it without a source change.
 +//
-+// Policy (docs/02-memory-bridge.md):
-+//   * try hipMalloc*; on hipErrorOutOfMemory, or when the soft VRAM cap would be exceeded,
-+//     allocate pinned mapped host memory (hipHostMalloc + hipHostGetDevicePointer) instead
-+//     and hand back the *device* pointer, so kernels and textures see ordinary memory
-+//     (25 GB/s over PCIe instead of failing);
++// Classes (docs/02-memory-bridge.md):
++//   Volume  3D pitched allocations: SGM / Refine similarity volumes. Streamed by every
++//           aggregation pass: the biggest class, but coalesced, so the cheapest per byte behind PCIe.
++//   Map     2D pitched allocations: depth / sim / normal maps and per-tile working buffers.
++//   Image   camera mipmap levels (tagged by the mipmap emulation, mipmap_emu.h). Sampled as
++//           random texture fetches by every similarity kernel: by far the worst class to spill.
++//   Other   everything else (1D buffers, small tables).
++//
++// Placement:
++//   * a soft VRAM cap (default 90 % of the VRAM free when the bridge first runs, so WDDM on
++//     Windows never pages behind our back and Linux never hits a hard OOM);
++//   * Image is VRAM-only by default: measured on the RX 9070, camera images behind PCIe cost
++//     13x (random texture fetches, no cache reuse), volumes 5.6x for 30x the bytes, maps 1.9x;
++//     the planner keeps a VRAM reserve for them (setReserve) that the other classes respect;
++//   * Volume / Map / Other take VRAM while the cap minus that reserve allows, then mapped host
++//     memory (volumes are the cheapest class per byte to spill: streamed, coalesced);
 +//   * a registry maps device pointers of spilled blocks to their host pointers so
-+//     cudaFree() releases them correctly;
-+//   * environment knobs:
-+//       CHESHIRE_BRIDGE=0            disable (plain HIP behaviour)
-+//       CHESHIRE_BRIDGE_VRAM_MB=N    soft cap on bytes this process places in VRAM
-+//                                   (default: no cap -> spill only on real OOM;
-+//                                    on Windows WDDM never reports OOM, so set a cap
-+//                                    to keep hot buffers resident)
-+//       CHESHIRE_BRIDGE_HOST_MB=N    cap on spilled host bytes (default 25 % of RAM)
-+//       CHESHIRE_BRIDGE_LOG=1        log every spill to stderr
++//     cudaFree() releases the right thing; per-class live-byte counts for the planner and logs.
++//
++// Environment knobs:
++//   CHESHIRE_BRIDGE=0                    disable (plain HIP behaviour, no cap, no spill)
++//   CHESHIRE_BRIDGE_VRAM_MB=N            soft cap on bytes placed in VRAM (0 = no cap, v1 behaviour)
++//   CHESHIRE_BRIDGE_VRAM_FRACTION=F      default cap = F * free VRAM at init (default 0.9)
++//   CHESHIRE_BRIDGE_HOST_MB=N            cap on spilled host bytes (default 25 % of RAM)
++//   CHESHIRE_BRIDGE_HOST_CLASSES=a,b     force these classes to host memory (image,map,volume,other)
++//   CHESHIRE_BRIDGE_VRAM_ONLY_CLASSES=.. never spill these classes (fail with OOM instead); default: image
++//   CHESHIRE_BRIDGE_IMAGE_SPILL=1        allow camera images to spill after all (experiments)
++//   CHESHIRE_BRIDGE_PLANNER=0|1|2        DepthMapEstimator tile planner: 0 upstream heuristic on
++//                                        hipMemGetInfo, 1 upstream formula on the bridge's VRAM
++//                                        budget + image reserve, never fewer than one tile (default),
++//                                        2 tile buffers get all the VRAM and images go to host
++//   CHESHIRE_BRIDGE_LOG=1                log placement decisions and a per-class summary at exit
 +#pragma once
 +#include <hip/hip_runtime.h>
 +#include <cstdio>
 +#include <cstdlib>
 +#include <cstring>
 +#include <mutex>
++#include <string>
 +#include <unordered_map>
 +#if defined(_WIN32)
 +#  define WIN32_LEAN_AND_MEAN
@@ -315,29 +411,77 @@ index 0000000..3bf804b
 +namespace cheshire { namespace bridge {
 +
 +enum class Tier { Vram, Host };
++enum class Class { Other = 0, Map = 1, Volume = 2, Image = 3 };
++constexpr int kClasses = 4;
++inline const char* className(Class c) {
++    static const char* n[kClasses] = {"other", "map", "volume", "image"};
++    return n[int(c)];
++}
 +
++struct ClassStats {
++    size_t vramBytes = 0, hostBytes = 0;     // live
++    size_t vramAllocs = 0, hostAllocs = 0;   // cumulative
++    size_t vramPeak = 0, hostPeak = 0;
++};
 +struct Stats {
 +    size_t vramBytes = 0;      // live bytes this process placed in VRAM through the bridge
 +    size_t hostBytes = 0;      // live bytes spilled to host
 +    size_t spills = 0;         // number of allocations that went to host
 +    size_t spillFailures = 0;  // host fallback also failed
++    ClassStats cls[kClasses];
++};
++struct Budget {
++    size_t vramCap = 0, vramUsed = 0, hostCap = 0, hostUsed = 0;
++    bool enabled = false, imagesMaySpill = false;
++    int planner = 1;
 +};
 +
 +namespace detail {
-+struct Rec { void* host; size_t bytes; };
++struct Rec { void* host; size_t bytes; Class cls; };
++struct VRec { size_t bytes; Class cls; };
++
++inline Class& hint() { static thread_local Class c = Class::Other; return c; }
++
++inline bool listHas(const char* list, const char* name) {
++    if (!list) return false;
++    std::string s(list); std::string n(name);
++    size_t i = 0;
++    while (i <= s.size()) {
++        size_t j = s.find(',', i); if (j == std::string::npos) j = s.size();
++        if (s.compare(i, j - i, n) == 0) return true;
++        i = j + 1;
++    }
++    return false;
++}
 +
 +struct State {
 +    std::mutex m;
 +    std::unordered_map<void*, Rec> spilled;   // device ptr -> host record
-+    std::unordered_map<void*, size_t> vram;   // device ptr -> bytes (for the soft cap)
++    std::unordered_map<void*, VRec> vram;     // device ptr -> bytes/class (for the soft cap)
 +    Stats stats;
-+    bool enabled = true, log = false;
-+    size_t vramCap = ~size_t(0), hostCap = 0;
++    bool enabled = true, log = false, capInit = false;
++    bool hostFirst[kClasses] = {false, false, false, false};
++    bool vramOnly[kClasses] = {false, false, false, false};
++    size_t vramCap = ~size_t(0), hostCap = 0, reserve = 0;
++    double vramFraction = 0.9;
++    long long vramCapEnv = -1;   // -1 unset, 0 no cap, >0 MB
++    int planner = 1;
 +    State() {
 +        const char* e = std::getenv("CHESHIRE_BRIDGE");
 +        enabled = !(e && e[0] == '0');
 +        log = std::getenv("CHESHIRE_BRIDGE_LOG") != nullptr;
-+        if (const char* v = std::getenv("CHESHIRE_BRIDGE_VRAM_MB")) vramCap = size_t(std::strtoull(v, nullptr, 10)) << 20;
++        if (const char* v = std::getenv("CHESHIRE_BRIDGE_VRAM_MB")) vramCapEnv = std::strtoll(v, nullptr, 10);
++        if (const char* f = std::getenv("CHESHIRE_BRIDGE_VRAM_FRACTION")) vramFraction = std::strtod(f, nullptr);
++        if (const char* p = std::getenv("CHESHIRE_BRIDGE_PLANNER")) planner = std::atoi(p);
++        const char* hc = std::getenv("CHESHIRE_BRIDGE_HOST_CLASSES");
++        const char* vc = std::getenv("CHESHIRE_BRIDGE_VRAM_ONLY_CLASSES");
++        for (int c = 0; c < kClasses; ++c) {
++            hostFirst[c] = listHas(hc, className(Class(c)));
++            vramOnly[c] = listHas(vc, className(Class(c)));
++        }
++        // camera images stay in VRAM unless explicitly allowed out (13x slower behind PCIe)
++        const char* is = std::getenv("CHESHIRE_BRIDGE_IMAGE_SPILL");
++        if (!(is && is[0] == '1') && planner != 2 && !hostFirst[int(Class::Image)]) vramOnly[int(Class::Image)] = true;
 +        size_t ram = 0;
 +#if defined(_WIN32)
 +        MEMORYSTATUSEX ms; ms.dwLength = sizeof(ms); if (GlobalMemoryStatusEx(&ms)) ram = size_t(ms.ullTotalPhys);
@@ -346,6 +490,36 @@ index 0000000..3bf804b
 +#endif
 +        hostCap = ram / 4;
 +        if (const char* h = std::getenv("CHESHIRE_BRIDGE_HOST_MB")) hostCap = size_t(std::strtoull(h, nullptr, 10)) << 20;
++    }
++    ~State() {
++        if (!log) return;
++        std::fprintf(stderr, "[cheshire] bridge summary: %zu spills, %zu spill failures\n", stats.spills, stats.spillFailures);
++        for (int c = 0; c < kClasses; ++c) {
++            const ClassStats& s = stats.cls[c];
++            if (s.vramAllocs + s.hostAllocs == 0) continue;
++            std::fprintf(stderr, "[cheshire]   %-6s vram: %zu allocs, peak %zu MB | host: %zu allocs, peak %zu MB\n",
++                         className(Class(c)), s.vramAllocs, s.vramPeak >> 20, s.hostAllocs, s.hostPeak >> 20);
++        }
++    }
++    // the VRAM cap needs a device context; resolve it on first use (under the lock)
++    void initCap() {
++        if (capInit) return;
++        capInit = true;
++        if (vramCapEnv == 0) { vramCap = ~size_t(0); }
++        else if (vramCapEnv > 0) { vramCap = size_t(vramCapEnv) << 20; }
++        else {
++            size_t freeB = 0, totalB = 0;
++            if (hipMemGetInfo(&freeB, &totalB) == hipSuccess && freeB > 0) vramCap = size_t(double(freeB) * vramFraction);
++            else vramCap = ~size_t(0);
++        }
++        if (log) {
++            std::fprintf(stderr, "[cheshire] bridge: vram cap %s MB, host cap %zu MB, planner %d, host-first:",
++                         vramCap == ~size_t(0) ? "none" : std::to_string(vramCap >> 20).c_str(), hostCap >> 20, planner);
++            for (int c = 0; c < kClasses; ++c) if (hostFirst[c]) std::fprintf(stderr, " %s", className(Class(c)));
++            std::fprintf(stderr, " vram-only:");
++            for (int c = 0; c < kClasses; ++c) if (vramOnly[c]) std::fprintf(stderr, " %s", className(Class(c)));
++            std::fprintf(stderr, "\n");
++        }
 +    }
 +};
 +inline State& st() { static State s; return s; }
@@ -363,7 +537,7 @@ index 0000000..3bf804b
 +}
 +
 +// Allocate `bytes` in mapped host memory; returns the device-visible pointer.
-+inline hipError_t hostAlloc(void** devPtr, size_t bytes, const char* what) {
++inline hipError_t hostAlloc(void** devPtr, size_t bytes, Class cls, const char* what) {
 +    State& s = st();
 +    std::lock_guard<std::mutex> g(s.m);
 +    if (s.stats.hostBytes + bytes > s.hostCap) { s.stats.spillFailures++; return hipErrorOutOfMemory; }
@@ -373,24 +547,47 @@ index 0000000..3bf804b
 +    void* d = nullptr;
 +    e = hipHostGetDevicePointer(&d, h, 0);
 +    if (e != hipSuccess) { (void)hipHostFree(h); s.stats.spillFailures++; return e; }
-+    s.spilled[d] = Rec{h, bytes};
++    s.spilled[d] = Rec{h, bytes, cls};
 +    s.stats.hostBytes += bytes; s.stats.spills++;
-+    if (s.log) std::fprintf(stderr, "[cheshire] bridge: %s %zu MB -> host (host total %zu MB, vram total %zu MB)\n",
-+                            what, bytes >> 20, s.stats.hostBytes >> 20, s.stats.vramBytes >> 20);
++    ClassStats& cs = s.stats.cls[int(cls)];
++    cs.hostBytes += bytes; cs.hostAllocs++; if (cs.hostBytes > cs.hostPeak) cs.hostPeak = cs.hostBytes;
++    if (s.log) std::fprintf(stderr, "[cheshire] bridge: %s %s %zu MB -> host (host total %zu MB, vram total %zu MB)\n",
++                            className(cls), what, bytes >> 20, s.stats.hostBytes >> 20, s.stats.vramBytes >> 20);
 +    *devPtr = d;
 +    return hipSuccess;
 +}
 +
-+inline bool vramAllowed(size_t bytes) {
++// Decide whether `bytes` of class `cls` may be placed in VRAM under the soft cap.
++inline bool vramAllowed(size_t bytes, Class cls) {
 +    State& s = st();
 +    std::lock_guard<std::mutex> g(s.m);
-+    return s.stats.vramBytes + bytes <= s.vramCap;
++    s.initCap();
++    if (!s.enabled) return true;
++    if (s.vramOnly[int(cls)]) return true;
++    if (s.hostFirst[int(cls)]) return false;
++    const size_t reserve = (cls == Class::Image) ? 0 : s.reserve;   // the reserve is *for* images
++    if (s.vramCap == ~size_t(0)) return true;
++    return s.stats.vramBytes + bytes + reserve <= s.vramCap;
 +}
-+inline void noteVram(void* p, size_t bytes) {
++inline bool mayFallBack(Class cls) { return !st().vramOnly[int(cls)]; }
++inline void noteVram(void* p, size_t bytes, Class cls) {
 +    State& s = st(); std::lock_guard<std::mutex> g(s.m);
-+    s.vram[p] = bytes; s.stats.vramBytes += bytes;
++    s.vram[p] = VRec{bytes, cls}; s.stats.vramBytes += bytes;
++    ClassStats& cs = s.stats.cls[int(cls)];
++    cs.vramBytes += bytes; cs.vramAllocs++; if (cs.vramBytes > cs.vramPeak) cs.vramPeak = cs.vramBytes;
++}
++inline Class classFor(Class shapeDefault) {
++    const Class h = hint();
++    return h == Class::Other ? shapeDefault : h;
 +}
 +}  // namespace detail
++
++// Tag every allocation made while the scope is alive (e.g. camera mipmap levels).
++struct ClassScope {
++    Class prev;
++    explicit ClassScope(Class c) : prev(detail::hint()) { detail::hint() = c; }
++    ~ClassScope() { detail::hint() = prev; }
++};
 +
 +inline bool enabled() { return detail::st().enabled; }
 +inline Stats stats() { auto& s = detail::st(); std::lock_guard<std::mutex> g(s.m); return s.stats; }
@@ -398,41 +595,64 @@ index 0000000..3bf804b
 +    auto& s = detail::st(); std::lock_guard<std::mutex> g(s.m);
 +    return s.spilled.count(const_cast<void*>(devPtr)) ? Tier::Host : Tier::Vram;
 +}
++// VRAM the planner wants kept free for camera images (they are allocated after the tile buffers).
++inline void setReserve(size_t bytes) { auto& s = detail::st(); std::lock_guard<std::mutex> g(s.m); s.reserve = bytes; }
++inline Budget budget() {
++    auto& s = detail::st(); std::lock_guard<std::mutex> g(s.m);
++    s.initCap();
++    Budget b;
++    b.enabled = s.enabled;
++    b.vramCap = s.vramCap; b.vramUsed = s.stats.vramBytes;
++    b.hostCap = s.hostCap; b.hostUsed = s.stats.hostBytes;
++    b.imagesMaySpill = s.enabled && !s.vramOnly[int(Class::Image)] && s.hostCap > 0;
++    b.planner = s.enabled ? s.planner : 0;
++    if (b.vramCap == ~size_t(0)) {   // no cap: report what the device says
++        size_t freeB = 0, totalB = 0;
++        if (hipMemGetInfo(&freeB, &totalB) == hipSuccess) { b.vramCap = freeB + s.stats.vramBytes; }
++    }
++    return b;
++}
 +
 +inline hipError_t malloc(void** devPtr, size_t bytes) {
 +    if (!enabled()) return hipMalloc(devPtr, bytes);
++    const Class cls = detail::classFor(Class::Other);
 +    hipError_t e = hipErrorOutOfMemory;
-+    if (detail::vramAllowed(bytes)) { e = hipMalloc(devPtr, bytes); if (e == hipSuccess) { detail::noteVram(*devPtr, bytes); return e; } (void)hipGetLastError(); }
-+    return detail::hostAlloc(devPtr, bytes, "1D");
++    if (detail::vramAllowed(bytes, cls)) { e = hipMalloc(devPtr, bytes); if (e == hipSuccess) { detail::noteVram(*devPtr, bytes, cls); return e; } (void)hipGetLastError(); }
++    if (!detail::mayFallBack(cls)) return e;
++    return detail::hostAlloc(devPtr, bytes, cls, "1D");
 +}
 +
 +inline hipError_t mallocPitch(void** devPtr, size_t* pitch, size_t widthBytes, size_t height) {
 +    if (!enabled()) return hipMallocPitch(devPtr, pitch, widthBytes, height);
++    const Class cls = detail::classFor(Class::Map);
 +    const size_t p = detail::alignUp(widthBytes, detail::pitchAlign());
 +    const size_t bytes = p * height;
 +    hipError_t e = hipErrorOutOfMemory;
-+    if (detail::vramAllowed(bytes)) {
++    if (detail::vramAllowed(bytes, cls)) {
 +        e = hipMallocPitch(devPtr, pitch, widthBytes, height);
-+        if (e == hipSuccess) { detail::noteVram(*devPtr, *pitch * height); return e; }
++        if (e == hipSuccess) { detail::noteVram(*devPtr, *pitch * height, cls); return e; }
 +        (void)hipGetLastError();
 +    }
-+    e = detail::hostAlloc(devPtr, bytes, "2D pitched");
++    if (!detail::mayFallBack(cls)) return e;
++    e = detail::hostAlloc(devPtr, bytes, cls, "2D pitched");
 +    if (e == hipSuccess) *pitch = p;
 +    return e;
 +}
 +
 +inline hipError_t malloc3D(hipPitchedPtr* pp, hipExtent extent) {
 +    if (!enabled()) return hipMalloc3D(pp, extent);
++    const Class cls = detail::classFor(Class::Volume);
 +    const size_t p = detail::alignUp(extent.width, detail::pitchAlign());
 +    const size_t bytes = p * extent.height * extent.depth;
 +    hipError_t e = hipErrorOutOfMemory;
-+    if (detail::vramAllowed(bytes)) {
++    if (detail::vramAllowed(bytes, cls)) {
 +        e = hipMalloc3D(pp, extent);
-+        if (e == hipSuccess) { detail::noteVram(pp->ptr, pp->pitch * extent.height * extent.depth); return e; }
++        if (e == hipSuccess) { detail::noteVram(pp->ptr, pp->pitch * extent.height * extent.depth, cls); return e; }
 +        (void)hipGetLastError();
 +    }
++    if (!detail::mayFallBack(cls)) return e;
 +    void* d = nullptr;
-+    e = detail::hostAlloc(&d, bytes, "3D volume");
++    e = detail::hostAlloc(&d, bytes, cls, "3D volume");
 +    if (e == hipSuccess) { pp->ptr = d; pp->pitch = p; pp->xsize = extent.width; pp->ysize = extent.height; }
 +    return e;
 +}
@@ -444,8 +664,14 @@ index 0000000..3bf804b
 +    {
 +        std::lock_guard<std::mutex> g(s.m);
 +        auto it = s.spilled.find(devPtr);
-+        if (it != s.spilled.end()) { host = it->second.host; bytes = it->second.bytes; s.spilled.erase(it); s.stats.hostBytes -= bytes; }
-+        else { auto v = s.vram.find(devPtr); if (v != s.vram.end()) { s.stats.vramBytes -= v->second; s.vram.erase(v); } }
++        if (it != s.spilled.end()) {
++            host = it->second.host; bytes = it->second.bytes;
++            s.stats.hostBytes -= bytes; s.stats.cls[int(it->second.cls)].hostBytes -= bytes;
++            s.spilled.erase(it);
++        } else {
++            auto v = s.vram.find(devPtr);
++            if (v != s.vram.end()) { s.stats.vramBytes -= v->second.bytes; s.stats.cls[int(v->second.cls)].vramBytes -= v->second.bytes; s.vram.erase(v); }
++        }
 +    }
 +    return host ? hipHostFree(host) : hipFree(devPtr);
 +}
@@ -454,15 +680,21 @@ index 0000000..3bf804b
 +    Stats s = stats();
 +    std::fprintf(stderr, "[cheshire] bridge%s%s: vram %zu MB live, host %zu MB live, %zu spills, %zu spill failures\n",
 +                 tag[0] ? " " : "", tag, s.vramBytes >> 20, s.hostBytes >> 20, s.spills, s.spillFailures);
++    for (int c = 0; c < kClasses; ++c) {
++        const ClassStats& cs = s.cls[c];
++        if (cs.vramAllocs + cs.hostAllocs == 0) continue;
++        std::fprintf(stderr, "[cheshire]   %-6s vram %zu MB live (peak %zu), host %zu MB live (peak %zu)\n",
++                     className(Class(c)), cs.vramBytes >> 20, cs.vramPeak >> 20, cs.hostBytes >> 20, cs.hostPeak >> 20);
++    }
 +}
 +
 +}}  // namespace cheshire::bridge
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
 new file mode 100644
-index 0000000..85e137a
+index 0000000..5e0c4e6
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/cuda_to_hip.h
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,242 @@
 +// Cheshire "conversion API": compile AliceVision's CUDA depth-map sources as HIP
 +// without rewriting them. Force-included (clang -include / clang-cl /FI) or pulled in
 +// through the cuda_runtime.h shim next to this file.
@@ -550,7 +782,6 @@ index 0000000..85e137a
 +#define cudaMemcpyAsync hipMemcpyAsync
 +#define cudaMemcpy2D hipMemcpy2D
 +#define cudaMemcpy2DAsync hipMemcpy2DAsync
-+#define cudaMemcpy3D hipMemcpy3D
 +#define cudaMemcpy3DAsync hipMemcpy3DAsync
 +#define cudaMemcpy3DParms hipMemcpy3DParms
 +// cudaMemcpyToSymbol: hipMemcpyToSymbol resolves the symbol on every call (tens of ms each on
@@ -597,7 +828,6 @@ index 0000000..85e137a
 +// ---- arrays / mipmaps -----------------------------------------------------
 +#define cudaArray hipArray
 +#define cudaArray_t hipArray_t
-+#define cudaMemcpy2DToArray hipMemcpy2DToArray
 +#define cudaMemcpy2DFromArray hipMemcpy2DFromArray
 +#define cudaMallocArray hipMallocArray
 +#define cudaFreeArray hipFreeArray
@@ -617,11 +847,17 @@ index 0000000..85e137a
 +inline hipError_t cudaFreeMipmappedArray(hipMipmappedArray_t m) { return cheshire::mip::freeMipmappedArray(m); }
 +inline hipError_t cudaGetMipmappedArrayLevel(hipArray_t* a, hipMipmappedArray_t m, unsigned int level) { return cheshire::mip::getMipmappedArrayLevel(a, m, level); }
 +inline hipError_t cudaArrayGetInfo(hipChannelFormatDesc* d, hipExtent* e, unsigned int* f, hipArray_t a) { return cheshire::mip::arrayGetInfo(d, e, f, a); }
++// copies into a level: linear (bridge-managed, spillable) levels are plain hipMemcpy2D targets
++inline hipError_t cudaMemcpy2DToArray(hipArray_t dst, size_t wOff, size_t hOff, const void* src, size_t spitch, size_t width, size_t height, hipMemcpyKind kind)
++{ return cheshire::mip::memcpy2DToArray(dst, wOff, hOff, src, spitch, width, height, kind); }
++inline hipError_t cudaMemcpy3D(const hipMemcpy3DParms* p) { return cheshire::mip::memcpy3D(p); }
 +#else
 +#define cudaMallocMipmappedArray hipMallocMipmappedArray
 +#define cudaFreeMipmappedArray hipFreeMipmappedArray
 +#define cudaGetMipmappedArrayLevel hipGetMipmappedArrayLevel
 +#define cudaArrayGetInfo hipArrayGetInfo
++#define cudaMemcpy2DToArray hipMemcpy2DToArray
++#define cudaMemcpy3D hipMemcpy3D
 +#endif
 +#define cudaChannelFormatDesc hipChannelFormatDesc
 +#define cudaCreateChannelDesc hipCreateChannelDesc
@@ -703,20 +939,26 @@ index 0000000..85e137a
 +// tex2D<T>, tex2DLod<T>, surf2Dwrite, atomicAdd ...
 diff --git a/src/aliceVision/depthMap/cuda/hip/cheshire/mipmap_emu.h b/src/aliceVision/depthMap/cuda/hip/cheshire/mipmap_emu.h
 new file mode 100644
-index 0000000..c49ec92
+index 0000000..4661f14
 --- /dev/null
 +++ b/src/aliceVision/depthMap/cuda/hip/cheshire/mipmap_emu.h
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,231 @@
 +// Cheshire: mipmapped-array emulation for HIP stacks without hipMallocMipmappedArray
 +// (Linux ROCm 7.2 reports "Mipmap not supported on one of the devices", e.g. RX 5500 XT).
 +//
-+// A "mipmapped array" becomes one plain 2D array per level; a texture object over it becomes
++// A "mipmapped array" becomes one plain 2D level per mip level; a texture object over it becomes
 +// a small device-side table of one texture object per level, and the 64-bit handle AliceVision
 +// carries around (cudaTextureObject_t) is the device pointer of that table. Device code samples
 +// with tex2DLod(handle, u, v, level) -> tex2D(table[int(level + 0.5)], u, v): AliceVision only
 +// samples at integer levels (level = log2(scale / minDownscale)), so bilinear at that level is
 +// exactly what trilinear at an integer LOD returns. Fractional levels (custom patch-pattern
 +// subparts) are rounded to the nearest level.
++//
++// Level storage (runtime, CHESHIRE_MIPMAP_STORAGE=array|linear, default array):
++//   array   one hipArray per level (opaque, always VRAM);
++//   linear  one pitched linear buffer per level, allocated through the memory bridge as class
++//           Image and sampled through a hipResourceTypePitch2D texture. Linear levels are the
++//           only camera-image storage the bridge can spill to system RAM (bridge.h, v2).
 +//
 +// Active when CHESHIRE_EMULATE_MIPMAP is defined (the default under HIP); define
 +// CHESHIRE_NATIVE_MIPMAP to use hipMallocMipmappedArray where the platform supports it.
@@ -740,37 +982,83 @@ index 0000000..c49ec92
 +}
 +
 +// host-side implementation (plain __host__ functions: parsed in both compilation passes)
++#include <cstdio>
++#include <cstdlib>
 +#include <cstring>
 +#include <mutex>
 +#include <unordered_map>
 +#include <vector>
++#include <cheshire/bridge.h>
 +
 +namespace cheshire { namespace mip {
 +
-+struct MipRec { std::vector<hipArray_t> levels; hipChannelFormatDesc desc; size_t w, h; };
++enum class Storage { Array, Linear };
++
++// One mip level. `arr` for array storage; `dev`/`pitch` for linear storage (the fake hipArray_t
++// handed to AliceVision is then the address of this record).
++struct Level { hipArray_t arr = nullptr; void* dev = nullptr; size_t pitch = 0; size_t w = 0, h = 0; hipChannelFormatDesc desc{}; size_t elemBytes = 0; };
++struct MipRec { std::vector<Level*> levels; hipChannelFormatDesc desc{}; size_t w = 0, h = 0; size_t elemBytes = 0; Storage st = Storage::Array; };
 +struct TexRec { std::vector<hipTextureObject_t> levels; TexSet* dev; };
 +
 +struct Registry {
 +    std::mutex m;
-+    std::unordered_map<void*, MipRec> mips;   // fake hipMipmappedArray_t -> arrays
-+    std::unordered_map<void*, TexRec> texs;   // fake texture handle (device TexSet*) -> level textures
++    std::unordered_map<void*, MipRec> mips;      // fake hipMipmappedArray_t -> levels
++    std::unordered_map<void*, Level*> linear;    // fake hipArray_t (Level*) -> level (linear storage only)
++    std::unordered_map<void*, TexRec> texs;      // fake texture handle (device TexSet*) -> level textures
++    Storage storage = Storage::Array;
++    Registry() {
++        if (const char* s = std::getenv("CHESHIRE_MIPMAP_STORAGE")) {
++            if (s[0] == 'l' || s[0] == 'L') storage = Storage::Linear;
++            else if (s[0] == 'a' || s[0] == 'A') storage = Storage::Array;
++        }
++    }
 +};
 +inline Registry& reg() { static Registry r; return r; }
++inline Storage storage() { return reg().storage; }
++
++inline hipArray_t handleOf(Level* l) { return l->arr ? l->arr : reinterpret_cast<hipArray_t>(l); }
++
++// linear level lookup (nullptr when `a` is a real array)
++inline Level* linearLevel(hipArray_t a) {
++    std::lock_guard<std::mutex> g(reg().m);
++    auto it = reg().linear.find(reinterpret_cast<void*>(a));
++    return it == reg().linear.end() ? nullptr : it->second;
++}
 +
 +inline hipError_t mallocMipmappedArray(hipMipmappedArray_t* out, const hipChannelFormatDesc* desc, hipExtent extent, unsigned int levels, unsigned int flags) {
 +    (void)flags;  // surfaces are not used with the emulated levels (buffer-copy mip builder)
 +    if (levels == 0 || levels > (unsigned)kMaxLevels) return hipErrorInvalidValue;
 +    MipRec rec; rec.desc = *desc; rec.w = extent.width; rec.h = extent.height;
++    rec.elemBytes = size_t(desc->x + desc->y + desc->z + desc->w) / 8;
++    rec.st = storage();
 +    size_t w = extent.width, h = extent.height;
++    auto fail = [&](hipError_t e) {
++        for (Level* l : rec.levels) {
++            if (l->arr) (void)hipFreeArray(l->arr);
++            if (l->dev) (void)cheshire::bridge::free(l->dev);
++            delete l;
++        }
++        return e;
++    };
 +    for (unsigned l = 0; l < levels; ++l) {
-+        hipArray_t a = nullptr;
-+        hipError_t e = hipMallocArray(&a, desc, w ? w : 1, h ? h : 1, hipArrayDefault);
-+        if (e != hipSuccess) { for (auto x : rec.levels) (void)hipFreeArray(x); return e; }
-+        rec.levels.push_back(a);
++        Level* lv = new Level; lv->w = w ? w : 1; lv->h = h ? h : 1; lv->desc = *desc; lv->elemBytes = rec.elemBytes;
++        hipError_t e;
++        if (rec.st == Storage::Linear) {
++            cheshire::bridge::ClassScope sc(cheshire::bridge::Class::Image);
++            e = cheshire::bridge::mallocPitch(&lv->dev, &lv->pitch, lv->w * rec.elemBytes, lv->h);
++        } else {
++            e = hipMallocArray(&lv->arr, desc, lv->w, lv->h, hipArrayDefault);
++        }
++        if (e != hipSuccess) { delete lv; return fail(e); }
++        rec.levels.push_back(lv);
 +        w /= 2; h /= 2;
 +    }
-+    void* handle = rec.levels[0];  // the level-0 array pointer doubles as the fake mipmap handle
-+    { std::lock_guard<std::mutex> g(reg().m); reg().mips[handle] = std::move(rec); }
++    if (std::getenv("CHESHIRE_BRIDGE_LOG"))
++        std::fprintf(stderr, "[cheshire] mip: %zux%zu, %u levels, %zu B/texel, storage=%s\n", rec.w, rec.h, levels, rec.elemBytes, rec.st == Storage::Linear ? "linear" : "array");
++    void* handle = rec.levels[0];  // the level-0 record doubles as the fake mipmap handle
++    { std::lock_guard<std::mutex> g(reg().m);
++      if (rec.st == Storage::Linear) for (Level* l : rec.levels) reg().linear[l] = l;
++      reg().mips[handle] = std::move(rec); }
 +    *out = reinterpret_cast<hipMipmappedArray_t>(handle);
 +    return hipSuccess;
 +}
@@ -779,7 +1067,7 @@ index 0000000..c49ec92
 +    std::lock_guard<std::mutex> g(reg().m);
 +    auto it = reg().mips.find(reinterpret_cast<void*>(mip));
 +    if (it == reg().mips.end() || level >= it->second.levels.size()) return hipErrorInvalidValue;
-+    *out = it->second.levels[level];
++    *out = handleOf(it->second.levels[level]);
 +    return hipSuccess;
 +}
 +
@@ -788,9 +1076,14 @@ index 0000000..c49ec92
 +    { std::lock_guard<std::mutex> g(reg().m);
 +      auto it = reg().mips.find(reinterpret_cast<void*>(mip));
 +      if (it == reg().mips.end()) return hipErrorInvalidValue;
-+      rec = std::move(it->second); reg().mips.erase(it); }
++      rec = std::move(it->second); reg().mips.erase(it);
++      for (Level* l : rec.levels) reg().linear.erase(l); }
 +    hipError_t err = hipSuccess;
-+    for (auto a : rec.levels) { hipError_t e = hipFreeArray(a); if (e != hipSuccess) err = e; }
++    for (Level* l : rec.levels) {
++        hipError_t e = l->arr ? hipFreeArray(l->arr) : cheshire::bridge::free(l->dev);
++        if (e != hipSuccess) err = e;
++        delete l;
++    }
 +    return err;
 +}
 +
@@ -799,9 +1092,9 @@ index 0000000..c49ec92
 +    std::lock_guard<std::mutex> g(reg().m);
 +    for (auto& kv : reg().mips) {
 +        const MipRec& r = kv.second;
-+        for (size_t l = 0; l < r.levels.size(); ++l) if (r.levels[l] == array) {
++        for (size_t l = 0; l < r.levels.size(); ++l) if (handleOf(r.levels[l]) == array) {
 +            if (desc) *desc = r.desc;
-+            if (extent) { extent->width = (r.w >> l) ? (r.w >> l) : 1; extent->height = (r.h >> l) ? (r.h >> l) : 1; extent->depth = 0; }
++            if (extent) { extent->width = r.levels[l]->w; extent->height = r.levels[l]->h; extent->depth = 0; }
 +            if (flags) *flags = 0;
 +            return hipSuccess;
 +        }
@@ -809,7 +1102,35 @@ index 0000000..c49ec92
 +    return hipArrayGetInfo(desc, extent, flags, array);
 +}
 +
++// Copies into a level: real arrays go to the HIP array copy, linear levels to hipMemcpy2D.
++inline hipError_t memcpy2DToArray(hipArray_t dst, size_t wOffset, size_t hOffset, const void* src, size_t spitch, size_t width, size_t height, hipMemcpyKind kind) {
++    if (Level* l = linearLevel(dst))
++        return hipMemcpy2D(static_cast<char*>(l->dev) + hOffset * l->pitch + wOffset, l->pitch, src, spitch, width, height, kind);
++    return hipMemcpy2DToArray(dst, wOffset, hOffset, src, spitch, width, height, kind);
++}
++inline hipError_t memcpy3D(const hipMemcpy3DParms* p) {
++    if (p->dstArray) {
++        if (Level* l = linearLevel(p->dstArray)) {
++            const size_t elemBytes = l->elemBytes;
++            if (elemBytes == 0) return hipErrorInvalidValue;
++            return hipMemcpy2D(static_cast<char*>(l->dev) + p->dstPos.y * l->pitch + p->dstPos.x * elemBytes, l->pitch,
++                               static_cast<const char*>(p->srcPtr.ptr) + p->srcPos.y * p->srcPtr.pitch + p->srcPos.x,
++                               p->srcPtr.pitch, p->extent.width * elemBytes, p->extent.height, p->kind);
++        }
++    }
++    return hipMemcpy3D(p);
++}
++
 +inline hipError_t createTextureObject(hipTextureObject_t* out, const hipResourceDesc* rd, const hipTextureDesc* td, const hipResourceViewDesc* vd) {
++    if (rd->resType == hipResourceTypeArray) {
++        // a single level asked for by "array": the mip builder samples the previous level this way
++        if (Level* l = linearLevel(rd->res.array.array)) {
++            hipResourceDesc lrd{}; lrd.resType = hipResourceTypePitch2D; lrd.res.pitch2D.devPtr = l->dev; lrd.res.pitch2D.desc = l->desc;
++            lrd.res.pitch2D.width = l->w; lrd.res.pitch2D.height = l->h; lrd.res.pitch2D.pitchInBytes = l->pitch;
++            return hipCreateTextureObject(out, &lrd, td, vd);
++        }
++        return hipCreateTextureObject(out, rd, td, vd);
++    }
 +    if (rd->resType != hipResourceTypeMipmappedArray) return hipCreateTextureObject(out, rd, td, vd);
 +    MipRec* rec = nullptr;
 +    { std::lock_guard<std::mutex> g(reg().m);
@@ -818,8 +1139,13 @@ index 0000000..c49ec92
 +    if (!rec) return hipCreateTextureObject(out, rd, td, vd);  // a native mipmapped array
 +    TexRec tr; tr.dev = nullptr;
 +    hipTextureDesc ld = *td; ld.mipmapFilterMode = hipFilterModePoint; ld.maxMipmapLevelClamp = 0; ld.minMipmapLevelClamp = 0; ld.mipmapLevelBias = 0;
-+    for (auto a : rec->levels) {
-+        hipResourceDesc lrd{}; lrd.resType = hipResourceTypeArray; lrd.res.array.array = a;
++    for (Level* l : rec->levels) {
++        hipResourceDesc lrd{};
++        if (l->arr) { lrd.resType = hipResourceTypeArray; lrd.res.array.array = l->arr; }
++        else {
++            lrd.resType = hipResourceTypePitch2D; lrd.res.pitch2D.devPtr = l->dev; lrd.res.pitch2D.desc = rec->desc;
++            lrd.res.pitch2D.width = l->w; lrd.res.pitch2D.height = l->h; lrd.res.pitch2D.pitchInBytes = l->pitch;
++        }
 +        hipTextureObject_t t = 0;
 +        hipError_t e = hipCreateTextureObject(&t, &lrd, &ld, nullptr);
 +        if (e != hipSuccess) { for (auto x : tr.levels) (void)hipDestroyTextureObject(x); return e; }

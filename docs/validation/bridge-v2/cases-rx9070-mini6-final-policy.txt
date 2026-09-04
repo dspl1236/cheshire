@@ -1,0 +1,9 @@
+# final policy: images VRAM-only + planner reserve; volumes/maps spill when one tile does not fit
+native-default        | build/av-gfx1201-install     |
+emu-linear            | build/av-gfx1201-emu-install | CHESHIRE_MIPMAP_STORAGE=linear
+emu-linear-cap1500    | build/av-gfx1201-emu-install | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=1500
+emu-linear-cap1000    | build/av-gfx1201-emu-install | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=1000
+emu-linear-cap700     | build/av-gfx1201-emu-install | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=700
+emu-linear-cap500     | build/av-gfx1201-emu-install | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=500
+emu-linear-cap500-p0  | build/av-gfx1201-emu-install | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=500 CHESHIRE_BRIDGE_PLANNER=0
+native-cap500         | build/av-gfx1201-install     | CHESHIRE_BRIDGE_VRAM_MB=500

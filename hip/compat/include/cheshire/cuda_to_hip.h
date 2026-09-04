@@ -85,7 +85,6 @@ inline hipError_t cudaMalloc3D(hipPitchedPtr* p, hipExtent extent) { return ches
 #define cudaMemcpyAsync hipMemcpyAsync
 #define cudaMemcpy2D hipMemcpy2D
 #define cudaMemcpy2DAsync hipMemcpy2DAsync
-#define cudaMemcpy3D hipMemcpy3D
 #define cudaMemcpy3DAsync hipMemcpy3DAsync
 #define cudaMemcpy3DParms hipMemcpy3DParms
 // cudaMemcpyToSymbol: hipMemcpyToSymbol resolves the symbol on every call (tens of ms each on
@@ -132,7 +131,6 @@ inline hipError_t cudaMemcpyToSymbolAsync(const void* symbol, const void* src, s
 // ---- arrays / mipmaps -----------------------------------------------------
 #define cudaArray hipArray
 #define cudaArray_t hipArray_t
-#define cudaMemcpy2DToArray hipMemcpy2DToArray
 #define cudaMemcpy2DFromArray hipMemcpy2DFromArray
 #define cudaMallocArray hipMallocArray
 #define cudaFreeArray hipFreeArray
@@ -152,11 +150,17 @@ inline hipError_t cudaMallocMipmappedArray(hipMipmappedArray_t* p, const hipChan
 inline hipError_t cudaFreeMipmappedArray(hipMipmappedArray_t m) { return cheshire::mip::freeMipmappedArray(m); }
 inline hipError_t cudaGetMipmappedArrayLevel(hipArray_t* a, hipMipmappedArray_t m, unsigned int level) { return cheshire::mip::getMipmappedArrayLevel(a, m, level); }
 inline hipError_t cudaArrayGetInfo(hipChannelFormatDesc* d, hipExtent* e, unsigned int* f, hipArray_t a) { return cheshire::mip::arrayGetInfo(d, e, f, a); }
+// copies into a level: linear (bridge-managed, spillable) levels are plain hipMemcpy2D targets
+inline hipError_t cudaMemcpy2DToArray(hipArray_t dst, size_t wOff, size_t hOff, const void* src, size_t spitch, size_t width, size_t height, hipMemcpyKind kind)
+{ return cheshire::mip::memcpy2DToArray(dst, wOff, hOff, src, spitch, width, height, kind); }
+inline hipError_t cudaMemcpy3D(const hipMemcpy3DParms* p) { return cheshire::mip::memcpy3D(p); }
 #else
 #define cudaMallocMipmappedArray hipMallocMipmappedArray
 #define cudaFreeMipmappedArray hipFreeMipmappedArray
 #define cudaGetMipmappedArrayLevel hipGetMipmappedArrayLevel
 #define cudaArrayGetInfo hipArrayGetInfo
+#define cudaMemcpy2DToArray hipMemcpy2DToArray
+#define cudaMemcpy3D hipMemcpy3D
 #endif
 #define cudaChannelFormatDesc hipChannelFormatDesc
 #define cudaCreateChannelDesc hipCreateChannelDesc

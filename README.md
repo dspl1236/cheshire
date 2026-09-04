@@ -39,11 +39,28 @@ Measured on the RX 9070 (`hip/tests/membridge_probe.hip`), the tiers the bridge 
 | pinned host copies | 28 GB/s each way |
 
 On Windows the driver already lets `hipMalloc` run past VRAM into system RAM; on Linux it fails
-hard. The bridge (`hip/compat/include/cheshire/bridge.h`) makes both behave the same: VRAM
-first, mapped host memory when VRAM is short or a soft cap is hit, one registry so `cudaFree`
-releases the right thing, and textures and kernels keep working over spilled buffers.
-Forcing it on a real job (1.5 GB VRAM cap, 5.4 GB spilled): output **bit-identical**,
-2.7x slower on the RX 9070, 5.2x on a PCIe 3.0 box. Design and measurements:
+hard. The bridge (`hip/compat/include/cheshire/bridge.h`) makes both behave the same, and v2
+decides *what* spills by buffer class instead of by arrival order. Measured, one class at a
+time behind PCIe, every run bit-identical:
+
+| spilled to system RAM | DepthMap (6 views) | vs all-VRAM |
+|---|---|---|
+| nothing | 20.6 s | |
+| depth/sim maps (879 MB) | 35.9 s | 1.7x |
+| similarity volumes (6.0 GB) | 96.4 s | 4.7x |
+| camera images (186 MB) | 460 s | 22x |
+
+So images stay resident (the planner reserves VRAM for them), volumes and maps spill, and the
+DepthMap planner sizes its tile parallelism from the bridge's budget instead of `hipMemGetInfo`:
+
+| VRAM available | v1 (arrival order, planner unaware) | v2 |
+|---|---|---|
+| 1.5 GB | 47.7 s, 188 spills | 20.0 s, 0 spills |
+| 1 GB | | 20.3 s, 0 spills |
+| 500 MB (below one tile) | fails upstream | 77.6 s, runs |
+
+Tile parallelism costs nothing to give up on this GPU, so a card with 1 GB to spare runs the
+stage at full speed. Design, knobs and every table:
 [docs/02-memory-bridge.md](docs/02-memory-bridge.md).
 
 ## What was found on the way (reproducers in `hip/tests/`)
@@ -51,8 +68,12 @@ Forcing it on a real job (1.5 GB VRAM cap, 5.4 GB spilled): output **bit-identic
 * **HIP drops `surf2Dwrite` stores into 16-bit float arrays**, on Windows and Linux alike;
   reads are fine. AliceVision's mip chain is built through a buffer copy instead.
 * **Linux ROCm 7.2 has no `hipMallocMipmappedArray`** on RDNA1 (and WSL2 has no textures at
-  all). Mipmaps are emulated in the compat layer as one texture per level: bit-identical to
-  native mipmaps on the RX 9070, ~35 % slower there, so the Windows build keeps native.
+  all). Mipmaps are emulated in the compat layer as one texture per level, in array or pitched
+  linear memory: bit-identical to native mipmaps on the RX 9070, 15 % slower there, so the
+  Windows build keeps native. Linear levels are what lets the bridge account for camera images.
+* **Camera images are the one thing never to put behind PCIe**: sampled as random texture
+  fetches by every similarity kernel, 186 MB of them cost 22x; 6 GB of similarity volumes,
+  streamed, cost 4.7x. The design doc had it the other way round.
 * **ROCm for Windows installs as pip wheels**, no admin installer. CMake refuses to mix
   `cl.exe` with clang for HIP: use `clang-cl` for both. `-fgpu-rdc` is broken on Windows, so
   the device code is compiled as one unity translation unit.
@@ -75,7 +96,7 @@ Everything needed to run or reproduce is attached to the
 | `monstree-full-cuda-reference.tar.gz` | 680 MB | 41-view SfM + CUDA DepthMap reference (GTX 1080 Ti) |
 | `cheshire-hip-depthmap-outputs.tar.gz` | 966 MB | the HIP depth maps behind the table above (RX 9070 6 + 41 views, RX 5500 XT, RX 6750 XT) |
 
-Reproduce a row: unpack a cache under `data/ref/<dataset>/`, then `scriptsun-depthmap.cmd <dataset>`
+Reproduce a row: unpack a cache under `data/ref/<dataset>/`, then `scripts\run-depthmap.cmd <dataset>`
 (Windows, set `CHESHIRE_INSTALL` to the unzipped folder) or `scripts/linux/run-depthmap.sh` (Linux).
 Both run the exact Meshroom 2023.3 DepthMap command line and finish with `scripts/compare_depthmaps.py`,
 which prints the per-view table and writes the side-by-side panels. Photos are
@@ -104,9 +125,10 @@ which prints the per-view table and writes the side-by-side panels. Photos are
 ## Status and next
 
 Works end to end on RDNA1, RDNA2 and RDNA4; RDNA3 has its code object in every bundle but no
-hardware run yet. Next: bridge v2 (keep similarity volumes in VRAM, spill camera images first,
-make the planner aware), a same-version CUDA reference, RDNA3 hardware, and a Meshroom
-release paired with the bundle on a production node.
+hardware run yet. A production Meshroom 2023.3 node runs its DepthMap on the HIP build through
+`scripts/linux/meshroom-pair.sh` (one wrapper, picks CUDA or HIP per run, so the card can be
+swapped). Next: planner-chosen tile sizes for the below-one-tile regime, a same-version CUDA
+reference, RDNA3 hardware.
 
 Primary repository: [git.hausofdub.com/dspl1236/cheshire](https://git.hausofdub.com/dspl1236/cheshire);
 mirror: [github.com/dspl1236/cheshire](https://github.com/dspl1236/cheshire). Licensed MPL-2.0.

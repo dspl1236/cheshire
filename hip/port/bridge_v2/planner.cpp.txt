@@ -1,0 +1,60 @@
+    // cheshire memory bridge v2 (hip/compat/include/cheshire/bridge.h). Measured on the RX 9070
+    // (docs/02-memory-bridge.md): camera images behind PCIe cost 13x, maps 1.9x, volumes 5.6x;
+    // tile parallelism costs nothing to give up. So: images stay in VRAM (reserve), tile
+    // parallelism is sized from the bridge's VRAM budget, and only when a single tile plus its
+    // images does not fit do volumes/maps spill.
+    //   CHESHIRE_BRIDGE_PLANNER=0  upstream heuristic (hipMemGetInfo * 0.8 for everything)
+    //   CHESHIRE_BRIDGE_PLANNER=1  upstream formula on the bridge VRAM budget, never below one tile (default)
+    //   CHESHIRE_BRIDGE_PLANNER=2  experiment: tile buffers get all the VRAM, camera images go to host
+    double deviceMemoryMB = 0.0;
+    int nbSimultaneousFullRc = 0;
+    int nbRemainingTiles = 0;
+    {
+        const cheshire::bridge::Budget budget = cheshire::bridge::budget();
+        const double toMB = 1.0 / (1024.0 * 1024.0);
+        const double vramMB = double(budget.vramCap > budget.vramUsed ? budget.vramCap - budget.vramUsed : 0) * toMB * 0.8;  // margin as upstream
+        const double hostMB = double(budget.hostCap > budget.hostUsed ? budget.hostCap - budget.hostUsed : 0) * toMB;
+        const double tilesCostMB = nbTilesPerCamera * tileCostMB;
+
+        double availableMB = vramMB;
+        if (budget.planner == 0)
+        {
+            double usedMB, totalMB;
+            getDeviceMemoryInfo(availableMB, usedMB, totalMB);
+            availableMB *= 0.8;
+        }
+        nbSimultaneousFullRc = static_cast<int>(availableMB / rcMaxCostMB);
+        nbRemainingTiles = static_cast<int>(std::max(0.0, (availableMB - nbSimultaneousFullRc * rcMaxCostMB) - rcCamsCostMB) / tileCostMB);
+        deviceMemoryMB = availableMB;
+
+        if (budget.planner == 2 && budget.imagesMaySpill && hostMB > 0.0)
+        {
+            // tiles from VRAM alone, images from VRAM + host
+            const int fullRcVram = nbSimultaneousFullRc, remVramTiles = nbRemainingTiles;
+            nbSimultaneousFullRc = static_cast<int>(std::min(vramMB / tilesCostMB, (vramMB + hostMB) / rcMaxCostMB));
+            const double remVramMB = vramMB - nbSimultaneousFullRc * tilesCostMB;
+            const double remTotalMB = (vramMB + hostMB) - nbSimultaneousFullRc * rcMaxCostMB;
+            nbRemainingTiles = static_cast<int>(std::max(0.0, std::min(remVramMB, remTotalMB - rcCamsCostMB)) / tileCostMB);
+            deviceMemoryMB = vramMB + hostMB;
+            ALICEVISION_LOG_INFO("Cheshire bridge planner 2: VRAM budget " << vramMB << " MB + host budget " << hostMB
+                                 << " MB for camera images (VRAM alone: " << fullRcVram << " full R cameras + " << remVramTiles << " tiles)");
+        }
+        else if (budget.planner != 0)
+        {
+            if (nbSimultaneousFullRc < 1 && nbRemainingTiles < 1)
+            {
+                // not even one tile with its images: run one tile and let the bridge spill its
+                // volumes / maps (images keep their reserve) instead of refusing the job
+                nbRemainingTiles = 1;
+                ALICEVISION_LOG_WARNING("Cheshire bridge planner 1: VRAM budget " << vramMB << " MB is below one tile ("
+                                        << rcMinCostMB << " MB); running one tile with volumes/maps spilling to system RAM");
+            }
+            else
+                ALICEVISION_LOG_INFO("Cheshire bridge planner 1: VRAM budget " << vramMB << " MB, " << nbSimultaneousFullRc
+                                     << " full R cameras + " << nbRemainingTiles << " tiles, images resident");
+        }
+        // keep VRAM for the camera images of every simultaneous R camera: they are allocated after
+        // the tile buffers, and the bridge makes volumes/maps respect this reserve
+        const int nbRc = nbSimultaneousFullRc + ((nbRemainingTiles > 0) ? 1 : 0);
+        cheshire::bridge::setReserve(size_t(std::max(0.0, nbRc * rcCamsCostMB) / toMB));
+    }

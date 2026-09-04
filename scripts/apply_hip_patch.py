@@ -193,6 +193,19 @@ def main() -> None:
         t = t.replace('#include "DepthMapEstimator.hpp"\n', '#include "DepthMapEstimator.hpp"\n#include <aliceVision/alicevision_omp.hpp>\n#include <algorithm>\n', 1)
         dme.write_text(t, encoding="utf-8", newline="\n")
 
+    # 1i. bridge v2 planner: tile parallelism from the VRAM budget, camera images may spill
+    #     (hip/port/bridge_v2/planner.cpp.txt replaces the hipMemGetInfo * 0.8 block)
+    t = dme.read_text(encoding="utf-8")
+    if "cheshire::bridge::budget" not in t:
+        p0 = "    // available device memory\n    double deviceMemoryMB;\n"
+        p1 = "        nbRemainingTiles = static_cast<int>(std::max(0.0, remainingMemoryMB - rcCamsCostMB) / tileCostMB);\n    }\n"
+        i0 = t.find(p0); i1 = t.find(p1, i0)
+        assert i0 > 0 and i1 > i0, "planner block not found in DepthMapEstimator.cpp"
+        i1 += len(p1)
+        original = t[i0:i1]
+        t = t[:i0] + "#ifdef CHESHIRE_HIP\n" + (ROOT / "hip/port/bridge_v2/planner.cpp.txt").read_text(encoding="utf-8") + "#else\n" + original + "#endif\n" + t[i1:]
+        dme.write_text(t, encoding="utf-8", newline="\n")
+
     # 1e. block-height override for the occupancy-derived launch shape (CHESHIRE_BLOCK_Y)
     t = sv.read_text(encoding="utf-8")
     old_blk = ("    if(recommendedBlockSize > 32)\n    {\n        const dim3 recommendedBlock(32, divUp(recommendedBlockSize, 32), 1);\n"

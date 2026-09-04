@@ -5,6 +5,7 @@
 #   sudo bash node-amd-setup.sh setup                 # groups, unpack, env file
 #   bash node-amd-setup.sh check                      # driver, /dev/kfd, GPU seen by the bundle
 #   bash node-amd-setup.sh run <scanName> [outDir]    # HIP DepthMap on /data/scans/<scan>/cache, compare with its CUDA DepthMap
+#   bash node-amd-setup.sh pair [<Meshroom dir>]       # make Meshroom run its DepthMap node on the HIP build
 #
 # Assumes the tarball is in ~/apps/cheshire/ (scp'd there from the build box).
 set -euo pipefail
@@ -59,5 +60,9 @@ run)
   echo "wall: $(( $(date +%s) - START )) s"
   echo "compare table: $OUT/compare_stats.md (python3 needs: pip install openexr numpy pillow)"
   ;;
-*) echo "usage: $0 setup|check|run <scan>"; exit 1;;
+pair)
+  # swap Meshroom's DepthMap binary for the HIP build (scripts/linux/meshroom-pair.sh)
+  bash "$(dirname "$0")/meshroom-pair.sh" "${2:-$_HOME/apps/Meshroom-2023.3.0}" "$BUNDLE"
+  ;;
+*) echo "usage: $0 setup|check|run <scan>|pair [<Meshroom dir>]"; exit 1;;
 esac

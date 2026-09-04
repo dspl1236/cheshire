@@ -7,9 +7,12 @@ call "%~dp0env.cmd"
 set DS=%~1
 if "%DS%"=="" set DS=monstree-mini6
 set R=%CHESHIRE_ROOT%
-set INST=%R%\build\av-gfx1201-install
+rem CHESHIRE_INSTALL: an unpacked release zip (self-contained) or another build install
+set INST=%CHESHIRE_INSTALL%
+if "%INST%"=="" set INST=%R%\build\av-gfx1201-install
 set REF=%R%\data\ref\%DS%
-set OUT=%R%\data\out\%DS%-hip
+set OUT=%CHESHIRE_OUT%
+if "%OUT%"=="" set OUT=%R%\data\out\%DS%-hip
 for /d %%D in ("%REF%\StructureFromMotion\*") do set SFM=%%D\sfm.abc
 for /d %%D in ("%REF%\PrepareDenseScene\*") do set IMGS=%%D
 for /d %%D in ("%REF%\DepthMap\*") do set REFDM=%%D

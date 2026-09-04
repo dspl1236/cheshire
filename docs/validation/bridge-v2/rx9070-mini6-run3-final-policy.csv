@@ -1,0 +1,9 @@
+case,install,env,stage_s,wall_s,tiles,spills,identical,worst_dev,pass_vs_cuda,planner,map_vram_peak_mb,map_host_peak_mb,volume_vram_peak_mb,volume_host_peak_mb,image_vram_peak_mb,image_host_peak_mb,other_vram_peak_mb,other_host_peak_mb
+native-default,build/av-gfx1201-install,,17.937,23.4,24,0,True,0.0,True,"VRAM budget 11630.1 MB, 5 full R cameras + 2 tiles, images resident",879,0,5988,0,0,0,0,0
+emu-linear,build/av-gfx1201-emu-install,CHESHIRE_MIPMAP_STORAGE=linear,20.554,26.0,24,0,True,0.0,True,"VRAM budget 11630.1 MB, 5 full R cameras + 2 tiles, images resident",879,0,5988,0,186,0,0,0
+emu-linear-cap1500,build/av-gfx1201-emu-install,CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=1500,20.004,25.2,2,0,True,0.0,True,"VRAM budget 1200 MB, 0 full R cameras + 2 tiles, images resident",100,0,499,0,186,0,0,0
+emu-linear-cap1000,build/av-gfx1201-emu-install,CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=1000,20.311,25.4,1,0,True,0.0,True,"VRAM budget 800 MB, 0 full R cameras + 1 tiles, images resident",64,0,249,0,186,0,0,0
+emu-linear-cap700,build/av-gfx1201-emu-install,CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=700,28.543,33.6,1,191,True,0.0,True,VRAM budget 560 MB is below one tile (668.658 MB); running one tile with volumes/maps spil,58,29,249,0,186,0,0,0
+emu-linear-cap500,build/av-gfx1201-emu-install,CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=500,77.579,82.7,1,197,True,0.0,True,VRAM budget 400 MB is below one tile (668.658 MB); running one tile with volumes/maps spil,32,45,187,155,186,0,0,0
+emu-linear-cap500-p0,build/av-gfx1201-emu-install,CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=500 CHESHIRE_BRIDGE_PLANNER=0,111.014,116.4,24,504,True,0.0,True,,32,879,187,5988,186,0,0,0
+native-cap500,build/av-gfx1201-install,CHESHIRE_BRIDGE_VRAM_MB=500,66.444,71.4,1,17,True,0.0,True,VRAM budget 400 MB is below one tile (668.658 MB); running one tile with volumes/maps spil,32,45,187,155,0,0,0,0

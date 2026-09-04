@@ -10,8 +10,12 @@ if "%STEP%"=="" set STEP=build
 set R=%CHESHIRE_ROOT:\=/%
 set LLVMBIN=%ROCM_PATH%/lib/llvm/bin
 set V=%R%/tools/vcpkg-deps/x64-windows-release
-set BLD=%R%/build/av-%ARCH%
-set INST=%R%/build/av-%ARCH%-install
+rem CHESHIRE_BUILD_SUFFIX: keep variants side by side (e.g. -emu for the mipmap-emulation build)
+set BLD=%R%/build/av-%ARCH%%CHESHIRE_BUILD_SUFFIX%
+set INST=%R%/build/av-%ARCH%%CHESHIRE_BUILD_SUFFIX%-install
+rem CHESHIRE_MIPMAP_NATIVE=0: emulated mip levels (array or linear storage, CHESHIRE_MIPMAP_STORAGE at run time)
+set MIPFLAG=-DCHESHIRE_NATIVE_MIPMAP
+if "%CHESHIRE_MIPMAP_NATIVE%"=="0" set MIPFLAG=
 
 python "%R%/scripts/apply_hip_patch.py" || exit /b 1
 
@@ -36,7 +40,7 @@ cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Re
   "-DCMAKE_CXX_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_HIP_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_HIP_ARCHITECTURES=%ARCH%" ^
-  "-DCMAKE_HIP_FLAGS=--rocm-path=%ROCM_PATH% --rocm-device-lib-path=%HIP_DEVICE_LIB_PATH% -DCHESHIRE_NATIVE_MIPMAP %CHESHIRE_HIP_EXTRA_FLAGS%" ^
+  "-DCMAKE_HIP_FLAGS=--rocm-path=%ROCM_PATH% --rocm-device-lib-path=%HIP_DEVICE_LIB_PATH% %MIPFLAG% %CHESHIRE_HIP_EXTRA_FLAGS%" ^
   "-DCMAKE_PREFIX_PATH=%ROCM_PATH%" ^
   "-DCMAKE_TOOLCHAIN_FILE=%V%/scripts/buildsystems/vcpkg.cmake" ^
   -DVCPKG_TARGET_TRIPLET=x64-windows-release -DVCPKG_MANIFEST_MODE=OFF ^
