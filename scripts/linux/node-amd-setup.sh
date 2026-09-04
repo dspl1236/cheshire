@@ -55,7 +55,7 @@ run)
   mkdir -p "$OUT"
   echo "cache=$CACHE ref=$REF out=$OUT"
   START=$(date +%s)
-  bash "$(dirname "$0")/run-depthmap.sh" "$BUNDLE" "$CACHE" "$OUT" 2>&1 | tee "$OUT/run.log" | grep -E "Task done|Device memory|available:|RESULT|error|Error"
+  bash "$(dirname "$0")/run-depthmap.sh" "$BUNDLE" "$CACHE" "$OUT" "$REF" 2>&1 | tee "$OUT/run.log" | grep -E "Task done|Device memory|available:|RESULT|error|Error"
   echo "wall: $(( $(date +%s) - START )) s"
   echo "compare table: $OUT/compare_stats.md (python3 needs: pip install openexr numpy pillow)"
   ;;
