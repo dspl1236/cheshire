@@ -100,3 +100,21 @@ Not yet done (v2): tier-aware placement per buffer class (keep similarity volume
 VRAM by shrinking tiles instead of spilling them) and a host-resident camera-mipmap
 tier in `DeviceCache`; the planner (`getNbSimultaneousTiles`) still sizes from
 `hipMemGetInfo * 0.8`.
+
+## First real-workload spill test (2026-09-03)
+
+`CHESHIRE_BRIDGE_VRAM_MB=1500` on the 6-view set forces almost every depth-map buffer past the
+soft cap (188 spills, 5.4 GB of host memory live at the peak):
+
+| GPU | uncapped | 1.5 GB VRAM cap | output |
+|---|---|---|---|
+| RX 9070, Windows, PCIe 4.0 | 17.4 s | 47.7 s (2.7x) | bit-identical |
+| RX 6750 XT, Linux (house-pc, PCIe 3.0, i3) | 31.0 s | 161.9 s (5.2x) | bit-identical |
+
+So the bridge does what v1 promised: a job that would not fit still finishes with exactly the
+same result, at PCIe speed. On the node the first attempt stopped at 3.7 GB because the default
+host budget is 25 % of RAM (14 GB box); `CHESHIRE_BRIDGE_HOST_MB=7000` lifted it. Two lessons
+for v2: the slowdown is dominated by similarity volumes landing in host memory (v1 spills
+whatever comes when the cap is hit - the tier rules in the design above are not implemented
+yet), and the planner still sizes tile parallelism from `hipMemGetInfo`, so it never chooses
+to spill on purpose; the cap only helps when the planner's estimate is wrong.
