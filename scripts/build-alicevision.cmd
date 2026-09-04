@@ -7,6 +7,10 @@ set ARCH=%~1
 if "%ARCH%"=="" set ARCH=gfx1201
 set STEP=%~2
 if "%STEP%"=="" set STEP=build
+rem CHESHIRE_HIP_ARCHS: semicolon list of code objects to build (cmd splits ";" in arguments, so it
+rem cannot be passed as %1); ARCH then only names the build directory.
+set ARCHS=%ARCH%
+if defined CHESHIRE_HIP_ARCHS set ARCHS=%CHESHIRE_HIP_ARCHS%
 set R=%CHESHIRE_ROOT:\=/%
 set LLVMBIN=%ROCM_PATH%/lib/llvm/bin
 set V=%R%/tools/vcpkg-deps/x64-windows-release
@@ -39,7 +43,7 @@ cmake -S "%R%/third_party/aliceVision" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Re
   "-DCMAKE_C_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_CXX_COMPILER=%LLVMBIN%/clang-cl.exe" ^
   "-DCMAKE_HIP_COMPILER=%LLVMBIN%/clang-cl.exe" ^
-  "-DCMAKE_HIP_ARCHITECTURES=%ARCH%" ^
+  "-DCMAKE_HIP_ARCHITECTURES=%ARCHS%" ^
   "-DCMAKE_HIP_FLAGS=--rocm-path=%ROCM_PATH% --rocm-device-lib-path=%HIP_DEVICE_LIB_PATH% %MIPFLAG% %CHESHIRE_HIP_EXTRA_FLAGS%" ^
   "-DCMAKE_PREFIX_PATH=%ROCM_PATH%" ^
   "-DCMAKE_TOOLCHAIN_FILE=%V%/scripts/buildsystems/vcpkg.cmake" ^
