@@ -35,7 +35,7 @@ Plus the glue the existing node needs: `reconstruct`/web UI currently hard-requi
   not a foundation.
 
 ## The production node today (from haus-infrastructure/docs/photogrammetry-node.md)
-* `house-pc` 192.168.0.18: i3-4330 / 14 GiB / GTX 1080 Ti 11 GB, Linux Mint 22.3,
+* `house-pc`: i3-4330 / 14 GiB / GTX 1080 Ti 11 GB, Linux Mint 22.3,
   Meshroom **2023.3.0** bundled tarball (CUDA 11.3 runtime, libpopsift), no Docker.
 * Only `DepthMap` (and optional PopSift extraction) touch the GPU. GPU share of a
   job is 18-22% (36% on `detailed`); the i3 is the real bottleneck.
