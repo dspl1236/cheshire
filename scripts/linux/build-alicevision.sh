@@ -58,4 +58,11 @@ if strings "$AV_BUNDLE/lib/libhsa-runtime64.so.1" | grep -q "/dev/dxg" && [ "$(s
   fi
   rm -rf "$T"
 fi
+# HIP dlopens the code-object manager at runtime; the bundler never sees it as a dependency.
+if ! ls "$AV_BUNDLE"/lib/libamd_comgr.so.* >/dev/null 2>&1; then
+  C=$(ls "$ROCM"/lib/libamd_comgr.so.*.*.* 2>/dev/null | head -1)
+  [ -n "$C" ] && cp "$C" "$AV_BUNDLE/lib/" && ln -sfn "$(basename "$C")" "$AV_BUNDLE/lib/libamd_comgr.so.${C##*.so.}" 2>/dev/null
+  ln -sfn "$(basename "$C")" "$AV_BUNDLE/lib/libamd_comgr.so.$(basename "$C" | sed 's/.*\.so\.\([0-9]*\).*/\1/')"
+  echo "added $(basename "$C") to the bundle"
+fi
 echo "BUNDLE -> $AV_BUNDLE"
