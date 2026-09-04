@@ -39,3 +39,18 @@ windows.h in the device pass (`BOOST_USE_WINDOWS_H`), an OpenMP structured-bindi
 `LEMON::lemon`, the constant-writing host files joining the unity TU (non-RDC shadows are
 TU-local on the host too), and **float4 instead of half4 camera textures** (HIP-Windows
 half texture bug). Validation: docs/04 (PASS on monstree-mini6, 21.2 s vs 31.9 s CUDA/1080 Ti).
+
+## v0.2.0 (2026-09-04)
+
+* Memory bridge v2: allocations tagged by class, soft VRAM cap, non-coherent host tier, planner
+  patch in `DepthMapEstimator::getNbSimultaneousTiles` (hip/port/bridge_v2). docs/02 has every
+  measurement; every configuration is bit-identical to v0.1.0.
+* Mipmap emulation: linear (pitch2D) level storage, default on the emulated build; per-level
+  array textures redirected; `[cheshire] mip:` log line.
+* Compat layer: `cudaMemcpy*` / `cudaMemset*` wrappers that stream-order operations on spilled
+  blocks; `cudaMemcpy2DToArray` / `cudaMemcpy3D` routed through the emulation.
+* Meshroom pairing (`scripts/linux/meshroom-pair.sh`): the 2023.3 DepthMap node runs on the HIP
+  build, dropping the removed `--sgmFilteringAxes` option; CUDA binary kept and chosen when
+  `nvidia-smi` answers.
+* Windows package with RDNA3 + RDNA4 code objects (gfx1100/1101/1102/1200/1201) for testers;
+  no RDNA3 hardware run yet.

@@ -101,3 +101,17 @@ on every view, median error 0, 97.5 % / 98.1 % median-view within 1 %. The RX 67
 RX 5500 XT produce identical statistics on both sets (RDNA1 and RDNA2 agree bit-for-bit, see
 the compare in this session). Pages: [6 views](validation/monstree-mini6-rx6750xt-linux/index.md),
 [41 views](validation/monstree-full-rx6750xt-linux/index.md).
+
+## v0.2.0 regression (2026-09-04)
+
+The bridge v2 work changed the allocator, the planner and the mip-level storage. Regression
+against the v0.1.0 outputs (which this document validates against CUDA):
+
+* 41 views, RX 9070, final native build, default settings: 123.0 s, depth maps bit-identical
+  to the v0.1.0 output.
+* 6 views: every configuration in the bridge matrices (`docs/validation/bridge-v2/`, 40+ runs
+  across the RX 9070 and the RX 6750 XT, VRAM caps down to 500 MB, every class forced to
+  system RAM) is bit-identical to the uncapped run.
+* The strict per-view criterion (>= 98 % of jointly valid pixels within 1 %) is at the noise
+  floor of the RX 6750 XT (97.5 % median view), so the matrix runner reports the number rather
+  than PASS/FAIL against CUDA; bit-identity to the validated output is the regression gate.

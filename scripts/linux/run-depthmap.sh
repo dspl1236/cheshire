@@ -3,6 +3,7 @@
 # DepthMap parameters of the node's `standard` preset (Meshroom 2023.3, downscale 2), then
 # compare against a reference DepthMap folder if given.
 # Usage: run-depthmap.sh <AliceVision bundle or install dir> <cache dir with StructureFromMotion/ and PrepareDenseScene/> <out dir> [reference DepthMap dir]
+#   CHESHIRE_DEPTHMAP_EXTRA: extra depthMapEstimation arguments (e.g. "--rangeStart 0 --rangeSize 1")
 set -euo pipefail
 AV="$1"; CACHE="$2"; OUT="$3"; REF="${4:-}"
 SFM=$(ls -d "$CACHE"/StructureFromMotion/*/sfm.abc | head -1)
@@ -20,7 +21,7 @@ export LD_LIBRARY_PATH="$AV/lib:$AV/aliceVision/lib:${LD_LIBRARY_PATH:-}"
   --refineEnabled True --refineScale 1 --refineStepXY 1 --refineMaxTCamsPerTile 4 --refineSubsampling 10 --refineHalfNbDepths 15 \
   --refineWSH 3 --refineSigma 15.0 --refineGammaC 15.5 --refineGammaP 8.0 --refineInterpolateMiddleDepth False --refineUseConsistentScale False \
   --colorOptimizationEnabled True --colorOptimizationNbIterations 100 --sgmUseCustomPatchPattern False --refineUseCustomPatchPattern False \
-  --nbGPUs 0 --verboseLevel info --output "$OUT" "$@"
+  --nbGPUs 0 --verboseLevel info --output "$OUT" ${CHESHIRE_DEPTHMAP_EXTRA:-}
 if [ -n "$REF" ]; then
   python3 "$(dirname "$0")/../compare_depthmaps.py" "$REF" "$OUT" --png "$OUT/compare"
 fi

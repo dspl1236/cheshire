@@ -100,6 +100,7 @@ maps being bit-identical between the two:
 | asset | size | contents |
 |---|---|---|
 | `cheshire-alicevision-hip-windows-x64-rocm7.2.1-gfx1201.zip` (v0.2.0) | 100 MB | self-contained AliceVision + HIP DepthMap for RDNA4 on Windows; unzip, needs only the Adrenalin driver |
+| `cheshire-alicevision-hip-windows-x64-rocm7.2.1-rdna3-rdna4.zip` (v0.2.0) | ~110 MB | the same, with code objects for gfx1100/1101/1102/1200/1201: RX 7000 owners, this is the one to try |
 | `cheshire-alicevision-hip-linux-x64-rocm7.2.tar.gz` (v0.2.0) | 116 MB | relocatable Linux bundle, code objects for RDNA1-RDNA4; needs only `amdgpu` + `/dev/kfd` |
 | `monstree-mini6-meshroom-cache.tar.gz` (v0.1.0) | 383 MB | 6-view Meshroom 2023.3 cache: CameraInit, SfM, PrepareDenseScene and the CUDA DepthMap reference |
 | `monstree-full-cuda-reference.tar.gz` (v0.1.0) | 680 MB | 41-view SfM + CUDA DepthMap reference (GTX 1080 Ti) |
@@ -110,6 +111,24 @@ Reproduce a row: unpack a cache under `data/ref/<dataset>/`, then `scripts\run-d
 Both run the exact Meshroom 2023.3 DepthMap command line and finish with `scripts/compare_depthmaps.py`,
 which prints the per-view table and writes the side-by-side panels. Photos are
 [alicevision/dataset_monstree](https://github.com/alicevision/dataset_monstree).
+
+## Help wanted: RDNA3
+
+Every package carries RDNA3 code objects (gfx1100/1101/1102) and none has run on RDNA3
+hardware; there is no such card here. Ten minutes on an RX 7600/7700/7800/7900 closes the gap:
+
+1. Download the RDNA3+RDNA4 Windows zip (or the Linux bundle) and
+   `monstree-mini6-meshroom-cache.tar.gz` from the release pages above.
+2. Unpack the cache under `data/ref/monstree-mini6/`, unzip the package anywhere, then
+   `set CHESHIRE_INSTALL=<unzipped folder>` and `scripts\run-depthmap.cmd monstree-mini6`
+   (Linux: `scripts/linux/run-depthmap.sh <bundle> <cache> <out> <cache>/DepthMap/<id>`).
+3. It prints the card name, `Task done in (s)`, and a per-view table against the CUDA
+   reference; `compare_stats.md` lands next to the depth maps. Open an issue with those two
+   things and the card model. A `[cheshire] bridge summary` line appears with
+   `CHESHIRE_BRIDGE_LOG=1` if anything spilled.
+
+Expected: mask agreement 1.000, median relative depth error 0.0000, 97-99 % of pixels within
+1 % on every view, and a time somewhere between the RX 6750 XT and the RX 9070 rows.
 
 ## Layout
 

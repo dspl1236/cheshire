@@ -169,3 +169,11 @@ Node-side layout: `~/apps/cheshire/{bundle,scripts,venv,env.sh}`; `env.sh` sets
 `ALICEVISION_ROOT`, `LD_LIBRARY_PATH` and `PATH`. The node's static-IP profile is bound to
 the old NIC name (`enp3s0`); with the new card the NIC is `enp5s0` and the box is on DHCP
 (`house-pc.local`). Left untouched on purpose: the network is the user's infra.
+
+### Running WSL-built test binaries on a node
+
+`hip/tests` can be built in WSL for a node's card (`cmake -DCMAKE_HIP_ARCHITECTURES=gfx1031 ...`)
+and copied over; they link against the bundle's `libamdhip64` through `env.sh`. One trap: a
+binary that carries only the card's exact code object segfaults at the first kernel launch if
+`HSA_OVERRIDE_GFX_VERSION` is set (the override makes the runtime look for gfx1030 code). Run
+them with the variable unset, or build them for the override's target as well.
