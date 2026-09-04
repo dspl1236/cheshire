@@ -93,3 +93,11 @@ pixels differing by >1 % is the cross-GPU noise floor. Details and panels:
 447.7 s vs 105.5 s CUDA on the same host; masks identical on 41/41, median error 0, median
 view 98.1 % within 1 % (worst 92.3 %). Same envelope as the RX 9070. Details:
 [docs/validation/monstree-full-rx5500xt-linux/index.md](validation/monstree-full-rx5500xt-linux/index.md).
+
+### house-pc, RX 6750 XT (RDNA2, Linux), 2026-09-03
+
+6 views 31.0 s (CUDA 1080 Ti 31.9 s, same host), 41 views 226.1 s (105.5 s); masks identical
+on every view, median error 0, 97.5 % / 98.1 % median-view within 1 %. The RX 6750 XT and the
+RX 5500 XT produce identical statistics on both sets (RDNA1 and RDNA2 agree bit-for-bit, see
+the compare in this session). Pages: [6 views](validation/monstree-mini6-rx6750xt-linux/index.md),
+[41 views](validation/monstree-full-rx6750xt-linux/index.md).
