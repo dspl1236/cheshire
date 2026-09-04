@@ -2,12 +2,14 @@
 # Cheshire Linux: build AliceVision with the HIP depth-map backend against the superbuild
 # dependencies (scripts/linux/build-deps.sh) and ROCm in /opt/rocm.
 # Usage: scripts/linux/build-alicevision.sh [configure|build|install|bundle] [gfx list]
-#   gfx list default: gfx1201;gfx1200;gfx1100;gfx1101;gfx1102  (RDNA4 + RDNA3)
+#   gfx list default: gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201  (RDNA2 + RDNA3 + RDNA4)
+#   RDNA2 cards other than gfx1030 (RX 6700 XT = gfx1031, 6600 = gfx1032 ...) run the gfx1030
+#   code with HSA_OVERRIDE_GFX_VERSION=10.3.0 in the environment.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AV_DEV="$ROOT/third_party/aliceVision"
 STEP="${1:-install}"
-ARCHS="${2:-gfx1201;gfx1200;gfx1100;gfx1101;gfx1102}"
+ARCHS="${2:-gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201}"
 ROCM="${ROCM_PATH:-/opt/rocm}"
 AV_DEPS="${AV_DEPS:-/opt/AliceVision_deps}"
 AV_BUILD="${AV_BUILD:-$HOME/av-hip-build}"
