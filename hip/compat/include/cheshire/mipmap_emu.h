@@ -9,7 +9,7 @@
 // exactly what trilinear at an integer LOD returns. Fractional levels (custom patch-pattern
 // subparts) are rounded to the nearest level.
 //
-// Level storage (runtime, CHESHIRE_MIPMAP_STORAGE=array|linear, default array):
+// Level storage (runtime, CHESHIRE_MIPMAP_STORAGE=array|linear, default linear):
 //   array   one hipArray per level (opaque, always VRAM);
 //   linear  one pitched linear buffer per level, allocated through the memory bridge as class
 //           Image and sampled through a hipResourceTypePitch2D texture. Linear levels are the
@@ -60,7 +60,7 @@ struct Registry {
     std::unordered_map<void*, MipRec> mips;      // fake hipMipmappedArray_t -> levels
     std::unordered_map<void*, Level*> linear;    // fake hipArray_t (Level*) -> level (linear storage only)
     std::unordered_map<void*, TexRec> texs;      // fake texture handle (device TexSet*) -> level textures
-    Storage storage = Storage::Array;
+    Storage storage = Storage::Linear;   // same speed as arrays, and the bridge can account for it
     Registry() {
         if (const char* s = std::getenv("CHESHIRE_MIPMAP_STORAGE")) {
             if (s[0] == 'l' || s[0] == 'L') storage = Storage::Linear;

@@ -1,0 +1,24 @@
+default-array                  31.068 s  tiles=24 spills=0 vol 5988/0 img 0/0 map 879/0 MB  identical=True pass=False
+default-linear                 31.244 s  tiles=24 spills=0 vol 5988/0 img 186/0 map 879/0 MB  identical=True pass=False
+planner0-linear                31.372 s  tiles=24 spills=0 vol 5988/0 img 186/0 map 879/0 MB  identical=True pass=False
+img-host                       40.002 s  tiles=24 spills=48 vol 5988/0 img 0/186 map 879/0 MB  identical=True pass=False
+vol-host                      174.356 s  tiles=24 spills=75 vol 0/5988 img 186/0 map 879/0 MB  identical=True pass=False
+map-host                       50.209 s  tiles=24 spills=442 vol 5988/0 img 186/0 map 0/879 MB  identical=True pass=False
+cap4000                        30.586 s  tiles=8 spills=0 vol 1996/0 img 186/0 map 312/0 MB  identical=True pass=False
+cap1500                        30.471 s  tiles=2 spills=0 vol 499/0 img 186/0 map 100/0 MB  identical=True pass=False
+cap1500-p0-v1like             190.507 s  tiles=24 spills=504 vol 187/5988 img 186/0 map 32/879 MB  identical=True pass=False
+cap700                         31.069 s  tiles=1 spills=191 vol 249/0 img 186/0 map 58/29 MB  identical=True pass=False
+cap500                        118.659 s  tiles=1 spills=197 vol 187/155 img 186/0 map 32/45 MB  identical=True pass=False
+| case | build | knobs | DepthMap s | tiles | spills | volume VRAM/host MB | image VRAM/host MB | map VRAM/host MB | bit-identical | vs CUDA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| default-array | emulated | `CHESHIRE_MIPMAP_STORAGE=array` | 31.068 | 24 | 0 | 5988 / 0 | 0 / 0 | 879 / 0 | yes | FAIL |
+| default-linear | emulated | `CHESHIRE_MIPMAP_STORAGE=linear` | 31.244 | 24 | 0 | 5988 / 0 | 186 / 0 | 879 / 0 | yes | FAIL |
+| planner0-linear | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_PLANNER=0` | 31.372 | 24 | 0 | 5988 / 0 | 186 / 0 | 879 / 0 | yes | FAIL |
+| img-host | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_HOST_CLASSES=image` | 40.002 | 24 | 48 | 5988 / 0 | 0 / 186 | 879 / 0 | yes | FAIL |
+| vol-host | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_HOST_CLASSES=volume CHESHIRE_BRIDGE_HOST_MB=7000` | 174.356 | 24 | 75 | 0 / 5988 | 186 / 0 | 879 / 0 | yes | FAIL |
+| map-host | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_HOST_CLASSES=map` | 50.209 | 24 | 442 | 5988 / 0 | 186 / 0 | 0 / 879 | yes | FAIL |
+| cap4000 | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=4000` | 30.586 | 8 | 0 | 1996 / 0 | 186 / 0 | 312 / 0 | yes | FAIL |
+| cap1500 | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=1500 CHESHIRE_BRIDGE_HOST_MB=7000` | 30.471 | 2 | 0 | 499 / 0 | 186 / 0 | 100 / 0 | yes | FAIL |
+| cap1500-p0-v1like | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=1500 CHESHIRE_BRIDGE_PLANNER=0 CHESHIRE_BRIDGE_HOST_MB=7000` | 190.507 | 24 | 504 | 187 / 5988 | 186 / 0 | 32 / 879 | yes | FAIL |
+| cap700 | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=700 CHESHIRE_BRIDGE_HOST_MB=7000` | 31.069 | 1 | 191 | 249 / 0 | 186 / 0 | 58 / 29 | yes | FAIL |
+| cap500 | emulated | `CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=500 CHESHIRE_BRIDGE_HOST_MB=7000` | 118.659 | 1 | 197 | 187 / 155 | 186 / 0 | 32 / 45 | yes | FAIL |

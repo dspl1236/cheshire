@@ -154,25 +154,33 @@ far. Measure first.
 ### Measured: what each class costs behind PCIe
 
 RX 9070, 6 views, `scripts/bridge_matrix.py`; every row bit-identical to the uncapped run and
-PASS against the CUDA reference. Full table with per-class peaks and the case list:
-`docs/validation/bridge-v2/rx9070-mini6-run2.md`.
+PASS against the CUDA reference. Two allocations of the host tier are shown, because the
+choice turned out to matter more than the class: the fine-grained (coherent) mapping the
+bridge started with, and the coarse-grained (`hipHostMallocNonCoherent`) mapping it ships
+with, which the GPU is allowed to cache. Full tables with per-class peaks:
+`docs/validation/bridge-v2/rx9070-mini6-run2.md` (fine-grained) and `rx9070-mini6-run7-noncoherent.md`.
 
-| build / placement | DepthMap | vs VRAM |
+| build / placement | fine-grained host | coarse-grained host (shipped) |
 |---|---|---|
-| native mipmaps, everything in VRAM (the Windows release) | 17.9 s | |
-| emulated mipmaps, array levels, everything in VRAM (what Linux runs) | 20.6 s | 1.0x |
-| emulated, linear levels, everything in VRAM | 20.8 s | 1.0x |
-| maps in host RAM (879 MB) | 35.9 s | 1.7x |
-| similarity volumes in host RAM (6.0 GB) | 96.4 s | 4.7x |
-| camera images in host RAM (186 MB) | 460 s | 22x |
-| everything in host RAM (7.0 GB) | 543 s | 26x |
+| native mipmaps, everything in VRAM (the Windows release) | 17.9 s | 18.0 s |
+| emulated mipmaps, array levels, everything in VRAM (what Linux runs) | 20.6 s | 20.4 s |
+| emulated, linear levels, everything in VRAM | 20.8 s | 20.2 s |
+| maps in host RAM (879 MB) | 35.9 s (1.7x) | 25.5 s (1.3x) |
+| similarity volumes in host RAM (6.0 GB) | 96.4 s (4.7x) | 76.6 s (3.8x) |
+| camera images in host RAM (186 MB) | 460 s (22x) | 20.4 s (1.0x) |
+| everything in host RAM (7.0 GB) | 543 s (26x) | 84.2 s (4.2x) |
 
-Per byte, that is volumes 13 s/GB, maps 17 s/GB, images 1,500 s/GB. Every similarity kernel
-samples the camera images as random texture fetches with no reuse across the PCIe link; the
-volumes are swept sequentially and the link is used at full width. So the order of things to
-spill is the reverse of the design: volumes, then maps, never images. The emulation costs
-15 % against native mipmaps on this card, and linear levels cost nothing against array levels,
-so linear is the storage the Linux bundle should default to.
+With fine-grained memory every texture fetch crosses PCIe: images, sampled as random texture
+fetches by every similarity kernel, cost 22x for 186 MB while the streamed volumes cost 4.7x
+for 6 GB. With coarse-grained memory the device caches host memory like its own, the camera
+levels' working set lives in the RX 9070's 64 MB Infinity Cache, and images behind PCIe cost
+nothing measurable; volumes and maps still pay for their streaming traffic. The emulation
+costs 15 % against native mipmaps on this card, and linear levels cost nothing against array
+levels, so linear is the Linux bundle's default storage (`CHESHIRE_MIPMAP_STORAGE=array` restores arrays).
+
+The policy stays conservative: images resident, volumes then maps spill. The 22x number is
+what any bridge gets by default on Linux (fine-grained is what `hipHostMalloc` gives), and
+the RX 6750 XT results below show how far PCIe 3.0 stretches the other classes.
 
 ### Measured: the planner is worth more than the spill
 
@@ -181,62 +189,63 @@ v1 capped VRAM at 1.5 GB with the planner still sizing 24 tiles from `hipMemGetI
 
 | VRAM cap | planner | simultaneous tiles | spills | DepthMap |
 |---|---|---|---|---|
-| none | upstream heuristic | 24 | 0 | 20.8 s |
-| 1.5 GB | 0 (v1 behaviour, images now spillable) | 24 | 221 (4.6 GB volumes + 183 MB images in host RAM) | 496 s |
-| 1.5 GB | 1 | 4 | 0 | 20.0 s |
-| 4 GB | 1 | 8 | 0 | 19.8 s |
+| none | upstream heuristic | 24 | 0 | 20.2 s |
+| 1.5 GB | 0 (v1 behaviour, images now spillable) | 24 | 504 (6 GB volumes + 879 MB maps in host RAM) | 83.5 s |
+| 1.5 GB | 1 | 2 | 0 | 19.9 s |
+| 4 GB | 1 | 8 | 0 | 19.9 s |
 | 8 GB | 1 | 18 | 0 | 20.3 s |
 
-Tile parallelism buys nothing on this GPU (4 tiles run as fast as 24), so keeping everything
+Tile parallelism buys nothing on this GPU (2 tiles run as fast as 24), so keeping everything
 resident and running fewer tiles at once is free. A card with 1.5 GB to spare runs the job at
-full speed where v1 ran it 2.8x slower (and would have run it 25x slower had it been able to
-spill the images). The planner change is upstreamable on its own.
+full speed where v1 ran it 2.8x slower (4.2x with the final allocator, since it spills more).
+The planner change is upstreamable on its own.
 
 ### Measured: the final policy below one tile
 
 Same card, caps chosen so that the whole job, then one full R camera, then a single tile no
-longer fit (one tile with its images needs 669 MB here). `docs/validation/bridge-v2/rx9070-mini6-run3-final-policy.md`.
+longer fit (one tile with its images needs 669 MB here). Final allocator;
+`docs/validation/bridge-v2/rx9070-mini6-run8-final.md`.
 
 | VRAM cap | what the planner did | spills | DepthMap | bit-identical |
 |---|---|---|---|---|
 | none (native mipmaps) | 24 tiles | 0 | 17.9 s | yes |
-| none (emulated, linear) | 24 tiles | 0 | 20.6 s | yes |
-| 1.5 GB | 2 tiles | 0 | 20.0 s | yes |
-| 1 GB | 1 tile | 0 | 20.3 s | yes |
-| 700 MB | 1 tile, 29 MB of maps spill | 191 | 28.5 s | yes |
-| 500 MB | 1 tile, 155 MB of volumes + 45 MB of maps spill, images resident | 197 | 77.6 s | yes |
-| 500 MB, planner off | 24 tiles, 6 GB of volumes + 879 MB of maps spill | 504 | 111 s | yes |
+| none (emulated, linear) | 24 tiles | 0 | 20.2 s | yes |
+| 1.5 GB | 2 tiles | 0 | 19.7 s | yes |
+| 1 GB | 1 tile | 0 | 19.7 s | yes |
+| 700 MB | 1 tile, 29 MB of maps spill | 191 | 22.3 s | yes |
+| 500 MB | 1 tile, 155 MB of volumes + 45 MB of maps spill, images resident | 197 | 46.9 s (native build: 40.5 s) | yes |
+| 500 MB, planner off | 24 tiles, 6 GB of volumes + 879 MB of maps spill | 504 | 83.7 s | yes |
 
 Down to 1 GB the job runs at full speed. Below one tile it degrades gracefully instead of
 failing (AliceVision's own planner throws "Not enough GPU memory to compute a single tile"),
 and the images never leave VRAM. Next lever for that regime is smaller tiles
 (`tileBufferWidth/Height` 512 quarters the volumes), which the planner could choose itself.
 
-Regression on the final native build, 41 views, default settings: 123.0 s (v0.1.0: 124.4 s),
-depth maps bit-identical to the v0.1.0 output (`data/out/monstree-full-hip-v2`).
-
 ### Measured on Linux: RX 6750 XT, PCIe 3.0 (house-pc), and a bug the matrix caught
 
-Same matrix on the production node (`docs/validation/bridge-v2/rx6750xt-mini6-run1.md`, 14 GB
-box so the default host budget is 3.6 GB):
+Same matrix on the production node, first with the fine-grained host tier
+(`docs/validation/bridge-v2/rx6750xt-mini6-run1.md`) and then with the shipped coarse-grained
+one (`rx6750xt-mini6-run5-final.md`); 14 GB box, `CHESHIRE_BRIDGE_HOST_MB=7000` where 6 GB of
+volumes have to fit:
 
-| placement | DepthMap | vs VRAM | bit-identical |
-|---|---|---|---|
-| array levels, everything in VRAM (v0.1.0 behaviour) | 31.1 s | | yes |
-| linear levels, everything in VRAM | 31.6 s | 1.0x | yes |
-| planner off | 31.3 s | 1.0x | yes |
-| maps in host RAM (879 MB) | 58.1 s | 1.9x | **no** (first run) |
-| similarity volumes in host RAM (6.0 GB, `CHESHIRE_BRIDGE_HOST_MB=7000`) | 264 s | 8.5x | yes |
-| camera images in host RAM (186 MB) | 2529 s | 81x | yes |
-| 4 GB / 1.5 GB VRAM cap, v2 planner | 30.9 s / 30.5 s (8 / 2 tiles) | 1.0x | yes |
-| 700 MB cap (one tile, 29 MB of maps spill) | 30.6 s | 1.0x | **no** (first run) |
-| 1.5 GB cap, planner off (v1 behaviour) | 292 s | 9.4x | **no** (first run) |
+| placement | fine-grained host | coarse-grained host (shipped) |
+|---|---|---|
+| array levels, everything in VRAM (v0.1.0 behaviour) | 31.1 s, identical | 31.1 s, identical |
+| linear levels, everything in VRAM | 31.6 s, identical | 31.2 s, identical |
+| maps in host RAM (879 MB) | 58.1 s, **wrong output** | 50.2 s (1.6x), identical |
+| similarity volumes in host RAM (6.0 GB) | | 174 s (5.6x), identical |
+| camera images in host RAM (186 MB) | 2529 s (81x), identical | 40.0 s (1.3x), identical |
+| 4 GB / 1.5 GB VRAM cap, v2 planner | 30.9 s / 30.5 s, identical | 30.6 s / 30.5 s, identical |
+| 700 MB cap (one tile, 29 MB of maps spill) | 30.6 s, **wrong output** | 31.1 s, identical |
+| 500 MB cap (one tile, volumes + maps spill) | | 119 s (3.8x), identical |
+| 1.5 GB cap, planner off (v1 behaviour) | 292 s, **wrong output** | 191 s (6.1x), identical |
 
-Two things this says. First, PCIe 3.0 makes the image case 81x instead of 22x: the policy of
-never letting images leave VRAM is not a tuning choice, it is the difference between a slow
-run and an unusable one. Second, every Linux run in which a *map* lived in host memory
-produced wrong depth maps (median depth error 17-29 %, extra "valid" pixels), while the same
-cases were bit-identical on Windows, and volumes or images in host memory were fine on both.
+Two things this said before the allocator changed. First, with fine-grained memory PCIe 3.0
+made the image case 81x instead of 22x; coarse-grained memory turns that into 1.3x because
+the device caches it. Second, every Linux run in which a *map* lived in fine-grained host
+memory produced wrong depth maps (median depth error 17-29 %, extra "valid" pixels), while
+the same cases were bit-identical on Windows, and volumes or images in host memory were fine
+on both.
 
 The first two suspects were ordering: ROCm may execute a copy or memset whose pointer is
 host-resident on the CPU at the call instead of behind the stream's kernels, so the compat

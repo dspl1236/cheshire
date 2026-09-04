@@ -43,21 +43,23 @@ hard. The bridge (`hip/compat/include/cheshire/bridge.h`) makes both behave the 
 decides *what* spills by buffer class instead of by arrival order. Measured, one class at a
 time behind PCIe, every run bit-identical:
 
-| spilled to system RAM | DepthMap (6 views) | vs all-VRAM |
+| spilled to system RAM (6 views) | fine-grained host memory | coarse-grained (shipped) |
 |---|---|---|
-| nothing | 20.6 s | |
-| depth/sim maps (879 MB) | 35.9 s | 1.7x |
-| similarity volumes (6.0 GB) | 96.4 s | 4.7x |
-| camera images (186 MB) | 460 s | 22x |
+| nothing | 20.6 s | 20.2 s |
+| depth/sim maps (879 MB) | 35.9 s (1.7x) | 25.5 s (1.3x) |
+| similarity volumes (6.0 GB) | 96.4 s (4.7x) | 76.6 s (3.8x) |
+| camera images (186 MB) | 460 s (22x) | 20.4 s (1.0x) |
 
-So images stay resident (the planner reserves VRAM for them), volumes and maps spill, and the
-DepthMap planner sizes its tile parallelism from the bridge's budget instead of `hipMemGetInfo`:
+The host tier is coarse-grained (`hipHostMallocNonCoherent`): the GPU caches it, atomics work,
+and the texture-sampled camera images stop costing anything. Images stay resident regardless
+(the planner reserves VRAM for them), volumes and maps spill, and the DepthMap planner sizes
+its tile parallelism from the bridge's budget instead of `hipMemGetInfo`:
 
 | VRAM available | v1 (arrival order, planner unaware) | v2 |
 |---|---|---|
 | 1.5 GB | 47.7 s, 188 spills | 20.0 s, 0 spills |
 | 1 GB | | 20.3 s, 0 spills |
-| 500 MB (below one tile) | fails upstream | 77.6 s, runs |
+| 500 MB (below one tile) | fails upstream | 47.2 s, runs |
 
 Tile parallelism costs nothing to give up on this GPU, so a card with 1 GB to spare runs the
 stage at full speed. Design, knobs and every table:
@@ -71,9 +73,14 @@ stage at full speed. Design, knobs and every table:
   all). Mipmaps are emulated in the compat layer as one texture per level, in array or pitched
   linear memory: bit-identical to native mipmaps on the RX 9070, 15 % slower there, so the
   Windows build keeps native. Linear levels are what lets the bridge account for camera images.
-* **Camera images are the one thing never to put behind PCIe**: sampled as random texture
-  fetches by every similarity kernel, 186 MB of them cost 22x; 6 GB of similarity volumes,
-  streamed, cost 4.7x. The design doc had it the other way round.
+* **GPU atomics into mapped host memory are silently wrong on Linux** unless the memory is
+  allocated non-coherent: on an RX 6750 XT, `atomicMin` into default (fine-grained) host memory
+  fails on every element while `atomicAdd` works, and both are right on
+  `hipHostMallocNonCoherent` memory (`hip/tests/host_atomics.hip`; Windows passes all cases).
+  Anything that spills a buffer kernels do atomics on, LLM runtimes included, needs to know.
+* **Fine-grained host memory is the wrong tier for texture-sampled data**: with the default
+  mapping, 186 MB of camera images behind PCIe cost 22x while 6 GB of streamed volumes cost
+  4.7x; allocated coarse-grained, the device caches them and the images cost nothing.
 * **ROCm for Windows installs as pip wheels**, no admin installer. CMake refuses to mix
   `cl.exe` with clang for HIP: use `clang-cl` for both. `-fgpu-rdc` is broken on Windows, so
   the device code is compiled as one unity translation unit.
