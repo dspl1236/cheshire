@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -100,6 +101,7 @@ inline bool listHas(const char* list, const char* name) {
 struct State {
     std::mutex m;
     std::unordered_map<void*, Rec> spilled;   // device ptr -> host record
+    std::map<uintptr_t, size_t> spilledRanges; // device ptr -> bytes, for containment lookups
     std::unordered_map<void*, VRec> vram;     // device ptr -> bytes/class (for the soft cap)
     Stats stats;
     bool enabled = true, log = false, capInit = false;
@@ -191,6 +193,7 @@ inline hipError_t hostAlloc(void** devPtr, size_t bytes, Class cls, const char* 
     e = hipHostGetDevicePointer(&d, h, 0);
     if (e != hipSuccess) { (void)hipHostFree(h); s.stats.spillFailures++; return e; }
     s.spilled[d] = Rec{h, bytes, cls};
+    s.spilledRanges[reinterpret_cast<uintptr_t>(d)] = bytes;
     s.stats.hostBytes += bytes; s.stats.spills++;
     ClassStats& cs = s.stats.cls[int(cls)];
     cs.hostBytes += bytes; cs.hostAllocs++; if (cs.hostBytes > cs.hostPeak) cs.hostPeak = cs.hostBytes;
@@ -234,6 +237,18 @@ struct ClassScope {
 
 inline bool enabled() { return detail::st().enabled; }
 inline Stats stats() { auto& s = detail::st(); std::lock_guard<std::mutex> g(s.m); return s.stats; }
+// Is `p` inside a spilled (mapped host) block? Copies are often issued from offset pointers.
+inline bool inSpilled(const void* p) {
+    auto& s = detail::st();
+    if (!s.enabled) return false;
+    std::lock_guard<std::mutex> g(s.m);
+    if (s.spilledRanges.empty()) return false;
+    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
+    auto it = s.spilledRanges.upper_bound(a);
+    if (it == s.spilledRanges.begin()) return false;
+    --it;
+    return a < it->first + it->second;
+}
 inline Tier tierOf(const void* devPtr) {
     auto& s = detail::st(); std::lock_guard<std::mutex> g(s.m);
     return s.spilled.count(const_cast<void*>(devPtr)) ? Tier::Host : Tier::Vram;
@@ -311,6 +326,7 @@ inline hipError_t free(void* devPtr) {
             host = it->second.host; bytes = it->second.bytes;
             s.stats.hostBytes -= bytes; s.stats.cls[int(it->second.cls)].hostBytes -= bytes;
             s.spilled.erase(it);
+            s.spilledRanges.erase(reinterpret_cast<uintptr_t>(devPtr));
         } else {
             auto v = s.vram.find(devPtr);
             if (v != s.vram.end()) { s.stats.vramBytes -= v->second.bytes; s.stats.cls[int(v->second.cls)].vramBytes -= v->second.bytes; s.vram.erase(v); }

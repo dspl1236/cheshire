@@ -1,0 +1,11 @@
+# house-pc RX 6750 XT (12 GB, PCIe 3.0): emulated mipmaps only (no hipMallocMipmappedArray on Linux ROCm 7.2)
+default-array         | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=array
+default-linear        | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear
+planner0-linear       | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_PLANNER=0
+img-host              | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_HOST_CLASSES=image
+vol-host              | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_HOST_CLASSES=volume
+map-host              | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_HOST_CLASSES=map
+cap4000               | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=4000
+cap1500               | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=1500 CHESHIRE_BRIDGE_HOST_MB=7000
+cap1500-p0-v1like     | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=1500 CHESHIRE_BRIDGE_PLANNER=0 CHESHIRE_BRIDGE_HOST_MB=7000
+cap700                | ~/apps/cheshire/bundle | CHESHIRE_MIPMAP_STORAGE=linear CHESHIRE_BRIDGE_VRAM_MB=700 CHESHIRE_BRIDGE_HOST_MB=7000

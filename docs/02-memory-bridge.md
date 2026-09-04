@@ -211,3 +211,35 @@ Down to 1 GB the job runs at full speed. Below one tile it degrades gracefully i
 failing (AliceVision's own planner throws "Not enough GPU memory to compute a single tile"),
 and the images never leave VRAM. Next lever for that regime is smaller tiles
 (`tileBufferWidth/Height` 512 quarters the volumes), which the planner could choose itself.
+
+Regression on the final native build, 41 views, default settings: 123.0 s (v0.1.0: 124.4 s),
+depth maps bit-identical to the v0.1.0 output (`data/out/monstree-full-hip-v2`).
+
+### Measured on Linux: RX 6750 XT, PCIe 3.0 (house-pc), and a bug the matrix caught
+
+Same matrix on the production node (`docs/validation/bridge-v2/rx6750xt-mini6-run1.md`, 14 GB
+box so the default host budget is 3.6 GB):
+
+| placement | DepthMap | vs VRAM | bit-identical |
+|---|---|---|---|
+| array levels, everything in VRAM (v0.1.0 behaviour) | 31.1 s | | yes |
+| linear levels, everything in VRAM | 31.6 s | 1.0x | yes |
+| planner off | 31.3 s | 1.0x | yes |
+| maps in host RAM (879 MB) | 58.1 s | 1.9x | **no** (first run) |
+| similarity volumes in host RAM | failed: 6 GB does not fit the 3.6 GB default host budget | | |
+| camera images in host RAM (186 MB) | 2529 s | 81x | yes |
+| 4 GB / 1.5 GB VRAM cap, v2 planner | 30.9 s / 30.5 s (8 / 2 tiles) | 1.0x | yes |
+| 700 MB cap (one tile, 29 MB of maps spill) | 30.6 s | 1.0x | **no** (first run) |
+| 1.5 GB cap, planner off (v1 behaviour) | 292 s | 9.4x | **no** (first run) |
+
+Two things this says. First, PCIe 3.0 makes the image case 81x instead of 22x: the policy of
+never letting images leave VRAM is not a tuning choice, it is the difference between a slow
+run and an unusable one. Second, every Linux run in which a *map* lived in host memory
+produced wrong depth maps (95 % of pixels off), while the same cases were bit-identical on
+Windows. The cause is in the copy path: AliceVision reads a finished tile map with
+`cudaMemcpy2DAsync` on the tile's stream and a `cudaDeviceSynchronize` afterwards; when the
+source is mapped host memory, ROCm executes that copy on the CPU at the call instead of queuing
+it behind the stream's kernels, so the host sees the map before the kernels wrote it. PAL on
+Windows orders it. The compat layer now stream-orders any copy whose source or destination is
+inside a spilled block (`cheshire::bridge::inSpilled`, a range lookup, and a
+`hipStreamSynchronize` before the copy), which costs a sync only in the degraded mode.

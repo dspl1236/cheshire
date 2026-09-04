@@ -81,10 +81,29 @@ inline hipError_t cudaMalloc3D(hipPitchedPtr* p, hipExtent extent) { return ches
 #define cudaMemsetAsync hipMemsetAsync
 #define cudaMemset2D hipMemset2D
 #define cudaMemset2DAsync hipMemset2DAsync
-#define cudaMemcpy hipMemcpy
-#define cudaMemcpyAsync hipMemcpyAsync
-#define cudaMemcpy2D hipMemcpy2D
-#define cudaMemcpy2DAsync hipMemcpy2DAsync
+// Copies that touch a spilled (mapped host) block are ordered by hand. On ROCm-Linux a copy
+// whose source or destination is host-resident is executed by the CPU at the call, not queued
+// behind the stream's kernels; AliceVision reads its finished tile maps exactly that way
+// (cudaMemcpy2DAsync on the tile stream, cudaDeviceSynchronize afterwards) and got stale data
+// when the map had been spilled (docs/02-memory-bridge.md, RX 6750 XT matrix). Windows (PAL)
+// orders these itself. The cost is a stream sync per copy of a spilled buffer, i.e. only in
+// the degraded mode.
+namespace cheshire { namespace detail {
+inline void orderCopy(const void* a, const void* b, hipStream_t s) {
+    if (cheshire::bridge::inSpilled(a) || cheshire::bridge::inSpilled(b)) (void)hipStreamSynchronize(s);
+}
+inline void orderCopy(const void* a, const void* b) {
+    if (cheshire::bridge::inSpilled(a) || cheshire::bridge::inSpilled(b)) (void)hipDeviceSynchronize();
+}
+}}  // namespace cheshire::detail
+inline hipError_t cudaMemcpy(void* dst, const void* src, size_t n, hipMemcpyKind k)
+{ cheshire::detail::orderCopy(dst, src); return hipMemcpy(dst, src, n, k); }
+inline hipError_t cudaMemcpyAsync(void* dst, const void* src, size_t n, hipMemcpyKind k, hipStream_t s = 0)
+{ cheshire::detail::orderCopy(dst, src, s); return hipMemcpyAsync(dst, src, n, k, s); }
+inline hipError_t cudaMemcpy2D(void* dst, size_t dp, const void* src, size_t sp, size_t w, size_t h, hipMemcpyKind k)
+{ cheshire::detail::orderCopy(dst, src); return hipMemcpy2D(dst, dp, src, sp, w, h, k); }
+inline hipError_t cudaMemcpy2DAsync(void* dst, size_t dp, const void* src, size_t sp, size_t w, size_t h, hipMemcpyKind k, hipStream_t s = 0)
+{ cheshire::detail::orderCopy(dst, src, s); return hipMemcpy2DAsync(dst, dp, src, sp, w, h, k, s); }
 #define cudaMemcpy3DAsync hipMemcpy3DAsync
 #define cudaMemcpy3DParms hipMemcpy3DParms
 // cudaMemcpyToSymbol: hipMemcpyToSymbol resolves the symbol on every call (tens of ms each on
