@@ -8,7 +8,9 @@
 #
 # Assumes the tarball is in ~/apps/cheshire/ (scp'd there from the build box).
 set -euo pipefail
-APPS="${APPS:-$HOME/apps/cheshire}"
+# under sudo, use the invoking user's home, not root's
+_HOME="$HOME"; [ -n "${SUDO_USER:-}" ] && _HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+APPS="${APPS:-$_HOME/apps/cheshire}"
 BUNDLE="$APPS/bundle"
 ENVF="$APPS/env.sh"
 CMD="${1:-check}"
@@ -22,8 +24,8 @@ setup)
   echo "unpacking $TB"
   tar -C "$APPS" -xzf "$TB"
   chown -R "$U:$U" "$APPS"
-  # RDNA2 cards that are not gfx1030 (6700 XT = gfx1031) run the gfx1030 code object
-  GFX=$(cat /sys/class/drm/card*/device/device 2>/dev/null | head -1)
+  # RDNA2 cards that are not gfx1030 (6700 XT = gfx1031) run the gfx1030 code object;
+  # RDNA1 (RX 5500 = gfx1012, RX 5700 = gfx1010) needs 10.1.0 only if the bundle lacks its gfx.
   cat > "$ENVF" <<EOF
 export ALICEVISION_ROOT=$BUNDLE
 export LD_LIBRARY_PATH=$BUNDLE/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}

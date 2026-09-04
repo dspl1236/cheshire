@@ -42,4 +42,20 @@ cmake --build . --parallel "$JOBS"
 cmake --install .
 [ "$STEP" = install ] && exit 0
 cmake --build . --target bundle
+# WSL build boxes carry the WSL flavour of the HSA runtime (probes /dev/dxg, never /dev/kfd);
+# a bundle made there fails hsa_init with OUT_OF_RESOURCES on a real Linux box. Replace it
+# with the standard runtime from AMD's apt repo (hsa-rocr) when it looks like the WSL one.
+if strings "$AV_BUNDLE/lib/libhsa-runtime64.so.1" | grep -q "/dev/dxg" && [ "$(stat -c %s "$AV_BUNDLE/lib/libhsa-runtime64.so.1")" -lt 3000000 ]; then
+  echo "bundle has the WSL HSA runtime; swapping in hsa-rocr from the AMD apt repo"
+  T=$(mktemp -d); ( cd "$T" && apt-get download hsa-rocr >/dev/null 2>&1 && dpkg-deb -x hsa-rocr_*.deb x )
+  K=$(find "$T/x" -name "libhsa-runtime64.so.1.*" -type f | head -1)
+  if [ -n "$K" ]; then
+    rm -f "$AV_BUNDLE"/lib/libhsa-runtime64.so.1*
+    cp "$K" "$AV_BUNDLE/lib/$(basename "$K")" && ln -sfn "$(basename "$K")" "$AV_BUNDLE/lib/libhsa-runtime64.so.1"
+    echo "  -> $(basename "$K")"
+  else
+    echo "  WARNING: could not download hsa-rocr; bundle keeps the WSL runtime" >&2
+  fi
+  rm -rf "$T"
+fi
 echo "BUNDLE -> $AV_BUNDLE"
