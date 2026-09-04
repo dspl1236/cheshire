@@ -39,6 +39,9 @@ The cat that grins on any hardware.
   [docs/validation/monstree-full](docs/validation/monstree-full/index.md) (41 views).
 * Memory bridge v1 (`hip/compat/include/cheshire/bridge.h`): VRAM first, mapped system RAM
   when short, hardware-tested.
+* Linux: bundle built in WSL2 (ROCm 7.2), validated on a Radeon RX 5500 XT (RDNA1) in the
+  production node against its own CUDA output: [6 views](docs/validation/monstree-mini6-rx5500xt-linux/index.md),
+  [41 views](docs/validation/monstree-full-rx5500xt-linux/index.md). Fat binary covers gfx1010-gfx1201.
 * Performance pass (docs/05): 6 views 21.2 s -> 17.4 s, 41 views 154.7 s -> 124.4 s on the RX 9070
   (CUDA node, GTX 1080 Ti: 31.9 s / 105.5 s). Output bit-identical to the validated build.
 

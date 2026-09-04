@@ -87,3 +87,9 @@ identical on all views, median error 0, 96-98 % within 1 %. HIP-vs-HIP across GP
 (RX 5500 XT Linux vs RX 9070 Windows, identical build) shows the same spread, so ~2 % of
 pixels differing by >1 % is the cross-GPU noise floor. Details and panels:
 [docs/validation/monstree-mini6-rx5500xt-linux/index.md](validation/monstree-mini6-rx5500xt-linux/index.md).
+
+### monstree-full (41 views) on house-pc, RX 5500 XT (Linux), 2026-09-03
+
+447.7 s vs 105.5 s CUDA on the same host; masks identical on 41/41, median error 0, median
+view 98.1 % within 1 % (worst 92.3 %). Same envelope as the RX 9070. Details:
+[docs/validation/monstree-full-rx5500xt-linux/index.md](validation/monstree-full-rx5500xt-linux/index.md).
