@@ -100,7 +100,7 @@ maps being bit-identical between the two:
 | asset | size | contents |
 |---|---|---|
 | `cheshire-alicevision-hip-windows-x64-rocm7.2.1-gfx1201.zip` (v0.2.0) | 100 MB | self-contained AliceVision + HIP DepthMap for RDNA4 on Windows; unzip, needs only the Adrenalin driver |
-| `cheshire-alicevision-hip-windows-x64-rocm7.2.1-rdna3-rdna4.zip` (v0.2.0) | ~110 MB | the same, with code objects for gfx1100/1101/1102/1200/1201: RX 7000 owners, this is the one to try |
+| `cheshire-alicevision-hip-windows-x64-rocm7.2.1-rdna3-rdna4.zip` (v0.2.0) | 100 MB | the same, with code objects for gfx1100/1101/1102/1200/1201: RX 7000 owners, this is the one to try |
 | `cheshire-alicevision-hip-linux-x64-rocm7.2.tar.gz` (v0.2.0) | 116 MB | relocatable Linux bundle, code objects for RDNA1-RDNA4; needs only `amdgpu` + `/dev/kfd` |
 | `monstree-mini6-meshroom-cache.tar.gz` (v0.1.0) | 383 MB | 6-view Meshroom 2023.3 cache: CameraInit, SfM, PrepareDenseScene and the CUDA DepthMap reference |
 | `monstree-full-cuda-reference.tar.gz` (v0.1.0) | 680 MB | 41-view SfM + CUDA DepthMap reference (GTX 1080 Ti) |
