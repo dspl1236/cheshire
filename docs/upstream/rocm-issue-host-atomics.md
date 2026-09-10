@@ -3,6 +3,8 @@
 Target: https://github.com/ROCm/clr/issues (HIP runtime) or https://github.com/ROCm/ROCm/issues.
 Attach `hip/tests/host_atomics.hip`. Fill in nothing; every number below was measured.
 
+Posted 2026-09-10: https://github.com/ROCm/clr/issues/285
+
 ---
 
 **Title:** atomicMin into mapped host memory (hipHostMallocMapped, fine-grained) silently returns wrong results on a platform without PCIe atomics; atomicAdd is fine; non-coherent memory is fine

@@ -5,6 +5,8 @@ Target: https://github.com/alicevision/AliceVision/discussions (category "Show a
 `docs/validation/monstree-full/` (CUDA | HIP | difference). Keep the planner PR for after they
 answer; this is the introduction.
 
+Posted 2026-09-10: https://github.com/orgs/alicevision/discussions/2175
+
 ---
 
 **Title:** DepthMap on AMD Radeon via HIP: bit-identical across RDNA1/2/4, matches the CUDA output, packaged for Windows and Linux
