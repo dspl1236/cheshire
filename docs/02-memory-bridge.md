@@ -109,7 +109,7 @@ soft cap (188 spills, 5.4 GB of host memory live at the peak):
 | GPU | uncapped | 1.5 GB VRAM cap | output |
 |---|---|---|---|
 | RX 9070, Windows, PCIe 4.0 | 17.4 s | 47.7 s (2.7x) | bit-identical |
-| RX 6750 XT, Linux (house-pc, PCIe 3.0, i3) | 31.0 s | 161.9 s (5.2x) | bit-identical |
+| RX 6750 XT, Linux (house-pc, 5 GT/s x16 link, i3) | 31.0 s | 161.9 s (5.2x) | bit-identical |
 
 So the bridge does what v1 promised: a job that would not fit still finishes with exactly the
 same result, at PCIe speed. On the node the first attempt stopped at 3.7 GB because the default
@@ -180,7 +180,7 @@ levels, so linear is the Linux bundle's default storage (`CHESHIRE_MIPMAP_STORAG
 
 The policy stays conservative: images resident, volumes then maps spill. The 22x number is
 what any bridge gets by default on Linux (fine-grained is what `hipHostMalloc` gives), and
-the RX 6750 XT results below show how far PCIe 3.0 stretches the other classes.
+the RX 6750 XT results below show how far a 5 GT/s x16 link stretches the other classes.
 
 ### Measured: the planner is worth more than the spill
 
@@ -221,7 +221,7 @@ failing (AliceVision's own planner throws "Not enough GPU memory to compute a si
 and the images never leave VRAM. Next lever for that regime is smaller tiles
 (`tileBufferWidth/Height` 512 quarters the volumes), which the planner could choose itself.
 
-### Measured on Linux: RX 6750 XT, PCIe 3.0 (house-pc), and a bug the matrix caught
+### Measured on Linux: RX 6750 XT, PCIe 2.0-speed link (house-pc), and a bug the matrix caught
 
 Same matrix on the production node, first with the fine-grained host tier
 (`docs/validation/bridge-v2/rx6750xt-mini6-run1.md`) and then with the shipped coarse-grained
@@ -240,8 +240,8 @@ volumes have to fit:
 | 500 MB cap (one tile, volumes + maps spill) | | 119 s (3.8x), identical |
 | 1.5 GB cap, planner off (v1 behaviour) | 292 s, **wrong output** | 191 s (6.1x), identical |
 
-Two things this said before the allocator changed. First, with fine-grained memory PCIe 3.0
-made the image case 81x instead of 22x; coarse-grained memory turns that into 1.3x because
+Two things this said before the allocator changed. First, with fine-grained memory the node's
+5 GT/s x16 link (PCIe 2.0 bandwidth; `docs/upstream/house-pc-pcie.txt`) made the image case 81x instead of 22x; coarse-grained memory turns that into 1.3x because
 the device caches it. Second, every Linux run in which a *map* lived in fine-grained host
 memory produced wrong depth maps (median depth error 17-29 %, extra "valid" pixels), while
 the same cases were bit-identical on Windows, and volumes or images in host memory were fine

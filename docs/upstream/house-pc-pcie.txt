@@ -1,0 +1,27 @@
+=== 03:00.0: 03:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Navi 22 [Radeon RX 6700/6700 XT/6750 XT / 6800M/6850M XT] (rev c0)
+		LnkCap:	Port #0, Speed 16GT/s, Width x16, ASPM L0s L1, Exit Latency L0s <64ns, L1 <1us
+		LnkSta:	Speed 16GT/s, Width x16
+		DevCap2: Completion Timeout: Range ABCD, TimeoutDis+ NROPrPrP- LTR+
+			 AtomicOpsCap: 32bit+ 64bit+ 128bitCAS-
+			 AtomicOpsCtl: ReqEn+
+=== 02:00.0: 02:00.0 PCI bridge: Advanced Micro Devices, Inc. [AMD/ATI] Navi 10 XL Downstream Port of PCI Express Switch
+		LnkCap:	Port #0, Speed 16GT/s, Width x16, ASPM L0s L1, Exit Latency L0s <64ns, L1 <1us
+		LnkSta:	Speed 16GT/s, Width x16
+		DevCap2: Completion Timeout: Not Supported, TimeoutDis- NROPrPrP- LTR+
+			 AtomicOpsCap: Routing+
+			 AtomicOpsCtl: EgressBlck-
+=== 01:00.0: 01:00.0 PCI bridge: Advanced Micro Devices, Inc. [AMD/ATI] Navi 10 XL Upstream Port of PCI Express Switch (rev c0)
+		LnkCap:	Port #0, Speed 16GT/s, Width x16, ASPM L1, Exit Latency L1 <64us
+		LnkSta:	Speed 5GT/s (downgraded), Width x16
+		DevCap2: Completion Timeout: Not Supported, TimeoutDis- NROPrPrP- LTR+
+			 AtomicOpsCap: Routing+ 32bit- 64bit- 128bitCAS-
+			 AtomicOpsCtl: EgressBlck-
+=== 00:01.0: 00:01.0 PCI bridge: Intel Corporation Xeon E3-1200 v3/4th Gen Core Processor PCI Express x16 Controller (rev 06)
+		LnkCap:	Port #2, Speed 5GT/s, Width x16, ASPM L0s L1, Exit Latency L0s <256ns, L1 <8us
+		LnkSta:	Speed 5GT/s, Width x16
+		DevCap2: Completion Timeout: Not Supported, TimeoutDis- NROPrPrP- LTR+
+			 AtomicOpsCap: Routing- 32bit+ 64bit+ 128bitCAS+
+			 AtomicOpsCtl: ReqEn- EgressBlck-
+
+kernel: 7.0.0-31-generic
+cpu: Intel(R) Core(TM) i3-4330 CPU @ 3.50GHz

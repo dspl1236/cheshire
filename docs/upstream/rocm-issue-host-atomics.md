@@ -30,7 +30,7 @@ every depth map came out wrong and nothing in the logs pointed at memory.
 | | |
 |---|---|
 | GPU | Radeon RX 6750 XT (gfx1031) |
-| CPU / platform | Intel Core i3-4330 (Haswell), consumer chipset, PCIe 3.0, no PCIe AtomicOps |
+| CPU / platform | Intel Core i3-4330 (Haswell); root port 00:01.0 advertises AtomicOpsCap 32bit+ 64bit+ 128bitCAS+, GPU AtomicOpsCtl ReqEn+; link 5 GT/s x16 (see house-pc-pcie.txt) |
 | OS | Linux Mint 22.3, kernel 7.0.0-31-generic, in-kernel amdgpu (no DKMS) |
 | ROCm | HIP runtime 7.2 (`libamdhip64.so.7.2.70200`), `libhsa-runtime64.so.1.18.70200`, from the ROCm 7.2 apt repository |
 | Control | same test on Windows 11, RX 9070 (gfx1201), ROCm 7.2.1 pip wheels, Adrenalin 26.8.1: all cases pass |
