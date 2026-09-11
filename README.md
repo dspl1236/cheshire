@@ -153,7 +153,8 @@ Expected: mask agreement 1.000, median relative depth error 0.0000, 97-99 % of p
 ## Status and next
 
 Works end to end on RDNA1, RDNA2 and RDNA4; RDNA3 has its code object in every bundle but no
-hardware run yet. A production Meshroom 2023.3 node runs its DepthMap on the HIP build through
+hardware run yet. GCN 4 (RX 400/500) is out: the ROCm 7.2 runtime refuses to initialise on an
+RX 570 even though the kernel driver accepts it (docs/06). A production Meshroom 2023.3 node runs its DepthMap on the HIP build through
 `scripts/linux/meshroom-pair.sh` (one wrapper, picks CUDA or HIP per run, so the card can be
 swapped). Next: planner-chosen tile sizes for the below-one-tile regime, a same-version CUDA
 reference, RDNA3 hardware.

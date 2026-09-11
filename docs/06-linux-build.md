@@ -177,3 +177,19 @@ and copied over; they link against the bundle's `libamdhip64` through `env.sh`. 
 binary that carries only the card's exact code object segfaults at the first kernel launch if
 `HSA_OVERRIDE_GFX_VERSION` is set (the override makes the runtime look for gfx1030 code). Run
 them with the variable unset, or build them for the override's target as well.
+
+## Not supported: GCN 4 (Polaris), tested with an RX 570 4 GB (2026-09-11)
+
+A PowerColor RX 570 (Ellesmere, `0x67df` rev `ef`, gfx803) went into house-pc. The kernel side
+is fine: `amdgpu` brings it up, KFD registers it (`gfx_target_version 80003`, 128 SIMDs). The
+ROCm 7.2 HSA runtime does not: `rocminfo` prints `Failed to map remapped mmio page on gpu_mem 0`
+and fails with `HSA_STATUS_ERROR`, with or without `ROC_ENABLE_PRE_VEGA=1`,
+`HSA_ENABLE_SDMA=0` or `HSA_OVERRIDE_GFX_VERSION=8.0.3`. HIP therefore sees no device, and no
+code object in the bundle can change that. GCN needs a ROCm 5.x stack end to end; the bundle
+is built against 7.2 and is not going to carry two runtimes. Practical floor for Cheshire:
+RDNA1 (RX 5000).
+
+The node handles it gracefully: the dashboard still shows the card (sysfs does not care
+about ROCm), and `reconstruct` now asks the HIP build whether it can see a GPU before
+starting a job, so an unsupported card is refused at launch instead of failing an hour later
+at the DepthMap node.
