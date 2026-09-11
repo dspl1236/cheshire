@@ -2,14 +2,16 @@
 # Cheshire Linux: build AliceVision with the HIP depth-map backend against the superbuild
 # dependencies (scripts/linux/build-deps.sh) and ROCm in /opt/rocm.
 # Usage: scripts/linux/build-alicevision.sh [configure|build|install|bundle] [gfx list]
-#   gfx list default: gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201  (RDNA2 + RDNA3 + RDNA4)
+#   gfx list default: RDNA1-RDNA4 discrete parts plus the APUs (gfx1035/1036 Rembrandt, gfx1103 Phoenix,
+#   gfx1150/1151/1152/1153 Strix Point / Strix Halo / Krackan) and Vega (gfx900/906, untested: the
+#   ROCm 7.2 runtime may refuse them the way it refuses Polaris)
 #   RDNA2 cards other than gfx1030 (RX 6700 XT = gfx1031, 6600 = gfx1032 ...) run the gfx1030
 #   code with HSA_OVERRIDE_GFX_VERSION=10.3.0 in the environment.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AV_DEV="$ROOT/third_party/aliceVision"
 STEP="${1:-install}"
-ARCHS="${2:-gfx1010;gfx1012;gfx1030;gfx1031;gfx1032;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201}"
+ARCHS="${2:-gfx900;gfx906;gfx1010;gfx1012;gfx1030;gfx1031;gfx1032;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201}"
 ROCM="${ROCM_PATH:-/opt/rocm}"
 AV_DEPS="${AV_DEPS:-/opt/AliceVision_deps}"
 AV_BUILD="${AV_BUILD:-$HOME/av-hip-build}"

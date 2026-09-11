@@ -193,3 +193,13 @@ The node handles it gracefully: the dashboard still shows the card (sysfs does n
 about ROCm), and `reconstruct` now asks the HIP build whether it can see a GPU before
 starting a job, so an unsupported card is refused at launch instead of failing an hour later
 at the DepthMap node.
+
+## APU and Vega code objects (v0.2.1, 2026-09-11)
+
+The bundle's default target list now includes the integrated RDNA parts (gfx1035/1036 Rembrandt,
+gfx1103 Phoenix, gfx1150 Strix Point, gfx1151 Strix Halo, gfx1152/1153 Krackan) and Vega
+(gfx900/906). The ROCm 7.2 compiler accepts all of them (`build/archcheck.sh` style probe);
+whether the 7.2 *runtime* initialises a given APU or a Vega is untested here. APUs share system
+memory, so they are the case where the bridge's VRAM budget is a software knob rather than a
+board limit: expect `hipMemGetInfo` to report the carve-out, and `CHESHIRE_BRIDGE_VRAM_MB` to be
+the thing to tune. The Windows RDNA3+RDNA4 package carries the RDNA3 APUs too.
